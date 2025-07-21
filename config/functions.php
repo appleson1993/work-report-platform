@@ -1,10 +1,26 @@
 <?php
 // Session 管理和工具函數
 
+// 載入生產環境配置
+require_once __DIR__ . '/production.php';
+
+// 定義安全檢查常數
+define('SECURITY_CHECK', true);
+
+//time taipei
+date_default_timezone_set('Asia/Taipei');
+
+// 載入安全模組
+require_once __DIR__ . '/security.php';
+
 // 啟動 Session
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
+    secureSession(); // 應用安全的 session 配置
 }
+
+// 檢查維護模式
+checkMaintenanceMode();
 
 // 檢查是否已登入
 function isLoggedIn() {
@@ -26,6 +42,9 @@ function loginUser($user) {
 
 // 登出使用者
 function logoutUser() {
+    if (isset($_SESSION['user_id'])) {
+        AuditLogger::log('user_logout', "User logged out: " . ($_SESSION['user_name'] ?? 'Unknown'));
+    }
     session_destroy();
     header('Location: index.php');
     exit;
@@ -61,6 +80,18 @@ function getPostValueSanitized($key, $default = '') {
 // 安全獲取整數型 POST 資料
 function getPostValueInt($key, $default = 0) {
     return isset($_POST[$key]) ? (int)$_POST[$key] : $default;
+}
+
+// 安全獲取布林型 POST 資料（轉為整數）
+function getPostValueBool($key, $default = 0) {
+    if (!isset($_POST[$key])) {
+        return $default;
+    }
+    $value = $_POST[$key];
+    if ($value === 'true' || $value === '1' || $value === 1 || $value === true) {
+        return 1;
+    }
+    return 0;
 }
 
 // 清理輸入資料

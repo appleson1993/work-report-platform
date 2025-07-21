@@ -2,12 +2,8 @@
 require_once 'config/database.php';
 require_once 'config/functions.php';
 
-// 檢查登入狀態和管理員權限
-requireLogin();
-if (!isAdmin()) {
-    header('Location: dashboard.php');
-    exit;
-}
+// 檢查管理員權限（使用安全增強版本）
+requireStrictAdmin();
 
 $db = new Database();
 
@@ -111,6 +107,70 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
             border-top: none;
             background-color: #f8f9fc;
         }
+
+        /* RWD 優化 */
+        @media (max-width: 768px) {
+            .navbar-brand {
+                font-size: 1rem;
+            }
+            
+            .navbar-nav .nav-link {
+                font-size: 0.875rem;
+                padding: 0.5rem 0.75rem;
+            }
+            
+            .stats-card .card-body {
+                padding: 1rem;
+            }
+            
+            .stats-card h5 {
+                font-size: 0.875rem;
+            }
+            
+            .stats-card h2 {
+                font-size: 1.5rem;
+            }
+            
+            .container {
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .navbar-brand i {
+                display: none;
+            }
+            
+            .navbar-nav .nav-link i {
+                margin-right: 0.25rem;
+            }
+            
+            .stats-card {
+                margin-bottom: 1rem;
+            }
+            
+            .card-body {
+                padding: 0.75rem;
+            }
+        }
+
+        /* 表格響應式優化 */
+        .table-responsive {
+            border-radius: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .table td, .table th {
+                padding: 0.5rem 0.25rem;
+                font-size: 0.875rem;
+            }
+            
+            .btn-sm {
+                padding: 0.25rem 0.5rem;
+                font-size: 0.75rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -118,15 +178,24 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
             <a class="navbar-brand" href="#">
-                <i class="fas fa-chart-line me-2"></i>打卡系統管理
+                <i class="fas fa-chart-line me-2"></i>
+                <span class="d-none d-sm-inline">打卡系統管理</span>
+                <span class="d-sm-none">打卡管理</span>
             </a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="admin.php">
-                    <i class="fas fa-arrow-left me-1"></i>回到管理面板
-                </a>
-                <a class="nav-link" href="logout.php">
-                    <i class="fas fa-sign-out-alt me-1"></i>登出
-                </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="admin.php">
+                        <i class="fas fa-arrow-left me-1"></i>
+                        <span class="d-none d-md-inline">回到管理面板</span>
+                        <span class="d-md-none">返回</span>
+                    </a>
+                    <a class="nav-link" href="logout.php">
+                        <i class="fas fa-sign-out-alt me-1"></i>登出
+                    </a>
+                </div>
             </div>
         </div>
     </nav>
@@ -134,7 +203,7 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
     <div class="container my-4">
         <!-- 統計概覽 -->
         <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stats-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">總記錄數</h5>
@@ -142,7 +211,7 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stats-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">總員工數</h5>
@@ -150,21 +219,19 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+                        <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stats-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">總工時</h5>
                         <h2 class="mb-0" id="total-hours">-</h2>
-                        <small>小時</small>
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stats-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">平均工時</h5>
                         <h2 class="mb-0" id="avg-hours">-</h2>
-                        <small>小時/天</small>
                     </div>
                 </div>
             </div>
@@ -180,12 +247,12 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                         </h5>
                     </div>
                     <div class="card-body">
-                        <div class="row align-items-end">
-                            <div class="col-md-3">
+                        <div class="row align-items-end g-3">
+                            <div class="col-lg-3 col-md-6">
                                 <label for="month-select" class="form-label">選擇月份</label>
                                 <input type="month" class="form-control" id="month-select" value="<?php echo date('Y-m'); ?>">
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-lg-3 col-md-6">
                                 <label for="user-select" class="form-label">選擇員工</label>
                                 <select class="form-select" id="user-select">
                                     <option value="0">所有員工</option>
@@ -194,12 +261,18 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                                     <?php endforeach; ?>
                                 </select>
                             </div>
-                            <div class="col-md-3">
-                                <button class="btn btn-primary" onclick="loadAttendanceData()">
-                                    <i class="fas fa-search me-2"></i>查詢
+                            <div class="col-lg-3 col-md-6">
+                                <button class="btn btn-primary w-100" onclick="loadAttendanceData()">
+                                    <i class="fas fa-search me-2"></i>
+                                    <span class="d-none d-sm-inline">查詢</span>
+                                    <span class="d-sm-none">查詢</span>
                                 </button>
-                                <button class="btn btn-success" onclick="exportData()">
-                                    <i class="fas fa-download me-2"></i>匯出
+                            </div>
+                            <div class="col-lg-3 col-md-6">
+                                <button class="btn btn-success w-100" onclick="exportData()">
+                                    <i class="fas fa-download me-2"></i>
+                                    <span class="d-none d-sm-inline">匯出 CSV</span>
+                                    <span class="d-sm-none">匯出</span>
                                 </button>
                             </div>
                         </div>
@@ -223,17 +296,18 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                                 <thead>
                                     <tr>
                                         <th>日期</th>
-                                        <th>員工姓名</th>
-                                        <th>上班時間</th>
-                                        <th>下班時間</th>
-                                        <th>工作時數</th>
-                                        <th>狀態</th>
-                                        <th>備註</th>
+                                        <th class="d-none d-md-table-cell">員工姓名</th>
+                                        <th class="d-md-none">姓名</th>
+                                        <th class="d-none d-lg-table-cell">上班時間</th>
+                                        <th class="d-none d-lg-table-cell">下班時間</th>
+                                        <th>工時</th>
+                                        <th class="d-none d-sm-table-cell">狀態</th>
+                                        <th class="d-none d-xl-table-cell">備註</th>
                                     </tr>
                                 </thead>
                                 <tbody id="attendance-table-body">
                                     <tr>
-                                        <td colspan="7" class="text-center py-4">
+                                        <td colspan="8" class="text-center py-4">
                                             <i class="fas fa-spinner fa-spin"></i> 載入中...
                                         </td>
                                     </tr>
@@ -328,12 +402,13 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                 html += `
                     <tr>
                         <td>${record.work_date}</td>
-                        <td>${record.user_name}</td>
-                        <td>${checkInTime}</td>
-                        <td>${checkOutTime}</td>
-                        <td>${record.work_hours || 0} 小時</td>
-                        <td><span class="badge ${statusBadge}">${statusText}</span></td>
-                        <td>${record.notes || '-'}</td>
+                        <td class="d-none d-md-table-cell">${record.user_name}</td>
+                        <td class="d-md-none">${record.user_name.substring(0, 4)}</td>
+                        <td class="d-none d-lg-table-cell">${checkInTime}</td>
+                        <td class="d-none d-lg-table-cell">${checkOutTime}</td>
+                        <td>${record.work_hours || 0}<span class="d-none d-sm-inline"> 小時</span><span class="d-sm-none">h</span></td>
+                        <td class="d-none d-sm-table-cell"><span class="badge ${statusBadge}">${statusText}</span></td>
+                        <td class="d-none d-xl-table-cell">${record.notes || '-'}</td>
                     </tr>
                 `;
             });

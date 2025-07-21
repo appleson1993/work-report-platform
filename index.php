@@ -6,11 +6,8 @@ $db = new Database();
 
 // 如果已登入，重導向到適當頁面
 if (isLoggedIn()) {
-    if (isAdmin()) {
-        header('Location: admin.php');
-    } else {
-        header('Location: dashboard.php');
-    }
+    // 管理員可以選擇進入前台或後台，預設進入前台
+    header('Location: dashboard.php');
     exit;
 }
 
@@ -24,19 +21,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && getPostValue('action') === 'login')
     
     if (empty($email) || empty($password)) {
         $error = '請填寫所有欄位';
+    } elseif (LoginAttemptLimiter::isLocked($email)) {
+        $remainingTime = LoginAttemptLimiter::getRemainingLockTime($email);
+        $minutes = ceil($remainingTime / 60);
+        $error = "登入失敗次數過多，請等待 {$minutes} 分鐘後再試";
+        AuditLogger::log('login_attempt_blocked', "Email: $email, Remaining lock time: {$remainingTime}s");
     } else {
         $user = $db->fetch('SELECT * FROM users WHERE email = ?', [$email]);
         
         if ($user && verifyPassword($password, $user['password'])) {
+            LoginAttemptLimiter::clearAttempts($email);
             loginUser($user);
-            if ($user['role'] === 'admin') {
-                header('Location: admin.php');
-            } else {
-                header('Location: dashboard.php');
-            }
+            AuditLogger::log('user_login', "Successful login for user: {$user['name']} ({$user['email']})", $user['id']);
+            
+            // 所有用戶預設進入前台工作頁面
+            header('Location: dashboard.php');
             exit;
         } else {
+            $attempts = LoginAttemptLimiter::recordAttempt($email);
             $error = 'Email 或密碼錯誤';
+            AuditLogger::log('login_failed', "Failed login attempt for email: $email (attempt #$attempts)");
+            
+            if ($attempts >= 3) {
+                $error .= "（剩餘嘗試次數：" . (5 - $attempts) . "）";
+            }
         }
     }
 }
@@ -212,13 +220,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && getPostValue('action') === 'registe
                         </div>
                     </div>
 
-                    <!-- 測試帳號提示 -->
-                    <div class="mt-4 p-3 bg-light rounded">
-                        <small class="text-muted">
-                            <strong>測試帳號：</strong><br>
-                            管理員：admin@worklog.com / admin123
-                        </small>
-                    </div>
+
                 </div>
             </div>
         </div>

@@ -19,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
             $taskId = getPostValueInt('task_id');
             $content = getPostValue('content'); // 保持原始內容用於富文本
             $status = getPostValueSanitized('status');
-            $isRichText = getPostValue('is_rich_text') === 'true' ? 1 : 0;
+            $isRichText = getPostValueBool('is_rich_text');
             
             // 對於富文本，檢查去除HTML標籤後的內容；對於純文本，直接檢查
             $contentToCheck = $isRichText ? strip_tags($content) : trim($content);
@@ -247,6 +247,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                 ],
                 'month' => $month
             ]);
+            
+        } elseif ($action === 'start_overtime') {
+            $workContent = getPostValue('work_content');
+            $currentTime = date('Y-m-d H:i:s');
+            $currentDate = date('Y-m-d');
+            
+            if (empty(trim($workContent))) {
+                throw new Exception('請填寫加班工作內容');
+            }
+            
+            // 檢查今天是否有進行中的加班
+            $existingOvertime = $db->fetch(
+                'SELECT * FROM overtime_records WHERE user_id = ? AND work_date = ? AND status = "started"',
+                [$userId, $currentDate]
+            );
+            
+            if ($existingOvertime) {
+                throw new Exception('您今天已有進行中的加班記錄');
+            }
+            
+            // 新增加班記錄
+            $db->execute(
+                'INSERT INTO overtime_records (user_id, work_date, start_time, work_content, status) VALUES (?, ?, ?, ?, ?)',
+                [$userId, $currentDate, $currentTime, $workContent, 'started']
+            );
+            
+            jsonResponse(true, '加班開始記錄成功！', ['start_time' => $currentTime]);
+            
+        } elseif ($action === 'end_overtime') {
+            $overtimeId = getPostValueInt('overtime_id');
+            $currentTime = date('Y-m-d H:i:s');
+            
+            // 取得加班記錄
+            $overtime = $db->fetch(
+                'SELECT * FROM overtime_records WHERE id = ? AND user_id = ? AND status = "started"',
+                [$overtimeId, $userId]
+            );
+            
+            if (!$overtime) {
+                throw new Exception('找不到進行中的加班記錄');
+            }
+            
+            // 計算加班時數
+            $startTime = strtotime($overtime['start_time']);
+            $endTime = strtotime($currentTime);
+            $overtimeHours = round(($endTime - $startTime) / 3600, 2);
+            
+            // 更新加班記錄
+            $db->execute(
+                'UPDATE overtime_records SET end_time = ?, overtime_hours = ?, status = "ended", updated_at = NOW() WHERE id = ?',
+                [$currentTime, $overtimeHours, $overtimeId]
+            );
+            
+            jsonResponse(true, '加班結束記錄成功！', [
+                'end_time' => $currentTime,
+                'overtime_hours' => $overtimeHours
+            ]);
+            
+        } elseif ($action === 'get_overtime_status') {
+            $currentDate = date('Y-m-d');
+            
+            // 取得今日加班記錄
+            $records = $db->fetchAll(
+                'SELECT * FROM overtime_records WHERE user_id = ? AND work_date = ? ORDER BY start_time DESC',
+                [$userId, $currentDate]
+            );
+            
+            jsonResponse(true, '取得加班狀態成功', $records);
+            
+        } elseif ($action === 'get_overtime_summary') {
+            $month = getPostValue('month', date('Y-m'));
+            
+            // 獲取該月份的加班記錄
+            $records = $db->fetchAll(
+                'SELECT * FROM overtime_records 
+                 WHERE user_id = ? AND work_date >= ? AND work_date < ? + INTERVAL 1 MONTH
+                 ORDER BY work_date DESC, start_time DESC',
+                [$userId, $month . '-01', $month . '-01']
+            );
+            
+            // 計算統計數據
+            $totalDays = count(array_unique(array_column($records, 'work_date')));
+            $totalHours = array_sum(array_column($records, 'overtime_hours'));
+            $totalSessions = count($records);
+            
+            jsonResponse(true, '取得加班統計成功', [
+                'records' => $records,
+                'stats' => [
+                    'total_days' => $totalDays,
+                    'total_sessions' => $totalSessions,
+                    'total_hours' => round($totalHours, 2)
+                ],
+                'month' => $month
+            ]);
         }
         
     } catch (Exception $e) {
@@ -283,6 +377,15 @@ $commissions = $db->fetchAll(
      ORDER BY p.name',
     [$userId]
 );
+
+// 取得啟用的公告（限制顯示前5條，以便測試"查看全部"功能）
+$announcements = $db->fetchAll(
+    'SELECT a.*, u.name as created_by_name FROM announcements a
+     JOIN users u ON a.created_by = u.id
+     WHERE a.is_active = 1
+     ORDER BY a.priority DESC, a.created_at DESC
+     LIMIT 5'
+);
 ?>
 
 <!DOCTYPE html>
@@ -293,6 +396,7 @@ $commissions = $db->fetchAll(
     <title>員工面板 - WorkLog Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
     <!-- 富文本編輯器 -->
     <script src="https://cdn.tiny.cloud/1/sydjdldkoxd6ws2x6gfqtqkdrtkas4kf1e1mfwqrebyk4e57/tinymce/6/tinymce.min.js" referrerpolicy="origin"></script>
     <style>
@@ -333,6 +437,311 @@ $commissions = $db->fetchAll(
             background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
             color: white;
         }
+        
+        /* RWD 優化 */
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 10px;
+            }
+            
+            /* 導航欄優化 */
+            .navbar-brand {
+                font-size: 1.1rem;
+            }
+            
+            #attendance-display {
+                font-size: 0.8rem;
+            }
+            
+            #work-time {
+                font-size: 0.7rem;
+            }
+            
+            /* 功能導航優化 */
+            .nav-pills .nav-link {
+                font-size: 0.85rem;
+                padding: 0.5rem 0.75rem;
+            }
+            
+            .nav-pills .nav-link i {
+                display: block;
+                margin-bottom: 0.2rem;
+            }
+            
+            /* 統計卡片優化 */
+            .card-body h2 {
+                font-size: 1.5rem;
+            }
+            
+            .card-body h5 {
+                font-size: 0.9rem;
+            }
+            
+            /* 任務卡片優化 */
+            .task-card .card-body {
+                padding: 1rem;
+            }
+            
+            .task-card .btn {
+                font-size: 0.8rem;
+                padding: 0.4rem 0.6rem;
+                margin-bottom: 0.3rem;
+            }
+            
+            .task-card .d-flex {
+                flex-direction: column;
+                gap: 0.5rem !important;
+            }
+            
+            /* 打卡按鈕優化 */
+            #check-in-btn, #check-out-btn {
+                width: 100%;
+                margin-bottom: 0.5rem;
+            }
+            
+            .d-flex.gap-3.justify-content-center {
+                flex-direction: column;
+                gap: 0.5rem !important;
+            }
+            
+            /* 表格優化 */
+            .table-responsive {
+                font-size: 0.85rem;
+            }
+            
+            .table th, .table td {
+                padding: 0.5rem;
+                vertical-align: middle;
+            }
+            
+            /* Modal 優化 */
+            .modal-dialog {
+                margin: 0.5rem;
+            }
+            
+            .modal-body {
+                padding: 1rem;
+            }
+            
+            /* 專案討論區優化 */
+            .discussion-item {
+                padding: 0.75rem;
+                font-size: 0.9rem;
+            }
+            
+            /* 收入統計優化 */
+            .income-card h2 {
+                font-size: 1.8rem;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            /* 超小螢幕優化 */
+            .card-body {
+                padding: 0.75rem;
+            }
+            
+            .nav-pills .nav-link {
+                font-size: 0.75rem;
+                padding: 0.4rem 0.5rem;
+            }
+            
+            .btn-group-vertical .btn {
+                font-size: 0.75rem;
+            }
+            
+            .task-card h6 {
+                font-size: 0.9rem;
+            }
+            
+            .badge {
+                font-size: 0.65rem;
+            }
+            
+            /* 隱藏不必要的圖標 */
+            .fa-2x, .fa-3x {
+                font-size: 1.5rem !important;
+            }
+        }
+        
+        /* 大螢幕優化 */
+        @media (min-width: 1200px) {
+            .container {
+                max-width: 1400px;
+            }
+            
+            .card-body {
+                padding: 2rem;
+            }
+            
+            .task-card {
+                transition: all 0.3s ease;
+            }
+            
+            .task-card:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 0.5rem 3rem 0 rgba(58, 59, 69, 0.25);
+            }
+
+            /* 專案討論區 RWD */
+            .project-item {
+                border-radius: 0.375rem !important;
+                margin-bottom: 0.25rem;
+                transition: all 0.2s ease;
+            }
+
+            .project-item:hover {
+                background-color: var(--bs-primary) !important;
+                color: white !important;
+                transform: translateX(4px);
+            }
+
+            /* 討論卡片優化 */
+            .discussions-container {
+                max-height: 500px;
+                overflow-y: auto;
+            }
+
+            @media (max-width: 768px) {
+                .discussions-container {
+                    max-height: 400px;
+                }
+                
+                .project-item {
+                    padding: 0.75rem 1rem;
+                    text-align: center;
+                }
+                
+                #discussions .col-lg-3 {
+                    order: 2;
+                    margin-top: 1rem;
+                }
+                
+                #discussions .col-lg-9 {
+                    order: 1;
+                }
+            }
+
+            @media (max-width: 576px) {
+                .project-item {
+                    padding: 0.5rem;
+                    font-size: 0.875rem;
+                }
+                
+                #current-project-name {
+                    font-size: 0.875rem;
+                }
+            }
+
+            /* 工作報告 Modal RWD */
+            .modal-dialog {
+                margin: 1rem;
+            }
+
+            @media (max-width: 576px) {
+                .modal-dialog {
+                    margin: 0.5rem;
+                }
+                
+                .modal-body {
+                    padding: 1rem;
+                }
+                
+                .form-check-label {
+                    font-size: 0.875rem;
+                }
+                
+                .alert {
+                    padding: 0.75rem;
+                    font-size: 0.875rem;
+                }
+                
+                .history-content-responsive .card {
+                    margin-bottom: 0.75rem;
+                }
+                
+                .history-content-responsive .card-body {
+                    padding: 0.75rem;
+                }
+                
+                .history-content-responsive .badge {
+                    font-size: 0.75rem;
+                }
+            }
+
+            /* 任務卡片 RWD 優化 */
+            .task-card .btn-group {
+                flex-wrap: wrap;
+                gap: 0.25rem;
+            }
+
+            @media (max-width: 768px) {
+                .task-card .btn-group .btn {
+                    font-size: 0.75rem;
+                    padding: 0.25rem 0.5rem;
+                }
+                
+                .task-card .btn-group .btn span.d-none.d-sm-inline {
+                    display: none !important;
+                }
+            }
+
+            /* 公告卡片樣式 */
+            .announcement-card {
+                transition: all 0.3s ease;
+                border-left: 4px solid transparent;
+            }
+
+            .announcement-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            }
+
+            .announcement-preview {
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
+                overflow: hidden;
+            }
+
+            @media (max-width: 768px) {
+                .announcement-card .card-body {
+                    padding: 0.75rem !important;
+                }
+                
+                .announcement-card .card-title {
+                    font-size: 0.9rem;
+                }
+                
+                .announcement-preview {
+                    font-size: 0.8rem;
+                    height: 2rem !important;
+                }
+            }
+        }
+        
+        /* 平板橫向優化 */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            .col-md-6 {
+                margin-bottom: 1rem;
+            }
+            
+            .nav-pills .nav-link {
+                font-size: 0.9rem;
+            }
+        }
+        
+        /* 打印樣式 */
+        @media print {
+            .navbar, .nav-pills, .btn, .modal {
+                display: none !important;
+            }
+            
+            .card {
+                box-shadow: none;
+                border: 1px solid #dee2e6;
+            }
+        }
     </style>
 </head>
 <body>
@@ -340,37 +749,133 @@ $commissions = $db->fetchAll(
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container">
             <a class="navbar-brand" href="#">
-                <i class="fas fa-clipboard-list me-2"></i>WorkLog Manager
+                <i class="fas fa-clipboard-list me-2"></i><span class="d-none d-sm-inline">WorkLog Manager</span><span class="d-sm-none">WLM</span>
             </a>
-            <div class="navbar-nav ms-auto">
-                <!-- 打卡狀態顯示 -->
-                <div class="nav-item me-3">
-                    <div class="nav-link text-white" id="attendance-status">
-                        <div id="attendance-display">
-                            <i class="fas fa-clock me-1"></i>
-                            <span id="status-text">檢查中...</span>
-                            <div id="work-time" class="small" style="display: none;">
-                                工作時間: <span id="work-duration">00:00:00</span>
+            
+            <!-- 手機版切換按鈕 -->
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <!-- 打卡狀態顯示 -->
+                    <div class="nav-item me-3">
+                        <div class="nav-link text-white" id="attendance-status">
+                            <div id="attendance-display">
+                                <i class="fas fa-clock me-1"></i>
+                                <span id="status-text">檢查中...</span>
+                                <div id="work-time" class="small" style="display: none;">
+                                    工作時間: <span id="work-duration">00:00:00</span>
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
-                
-                <div class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                        <i class="fas fa-user-circle me-2"></i><?php echo $_SESSION['user_name']; ?>
-                    </a>
-                    <ul class="dropdown-menu">
-                        <li><a class="dropdown-item" href="logout.php">
-                            <i class="fas fa-sign-out-alt me-2"></i>登出
-                        </a></li>
-                    </ul>
+                    
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user-circle me-2"></i><span class="d-none d-md-inline"><?php echo $_SESSION['user_name']; ?></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <?php if (isAdmin()): ?>
+                            <li><a class="dropdown-item" href="admin.php">
+                                <i class="fas fa-cog me-2"></i>系統管理
+                            </a></li>
+                            <li><a class="dropdown-item" href="attendance_admin.php">
+                                <i class="fas fa-chart-line me-2"></i>出勤管理
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <?php endif; ?>
+                            <li><a class="dropdown-item" href="logout.php">
+                                <i class="fas fa-sign-out-alt me-2"></i>登出
+                            </a></li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
     </nav>
 
     <div class="container my-4">
+        <!-- 最新公告區塊 -->
+        <?php if (!empty($announcements)): ?>
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fas fa-bullhorn me-2"></i>最新公告
+                        </h5>
+                        <?php if (count($announcements) > 3): ?>
+                            <button class="btn btn-outline-light btn-sm" onclick="document.getElementById('announcements-tab').click()">
+                                <i class="fas fa-arrow-right me-1"></i>查看全部
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="row g-2">
+                            <?php 
+                            $displayAnnouncements = array_slice($announcements, 0, 3);
+                            foreach ($displayAnnouncements as $index => $announcement): 
+                                $priorityClass = '';
+                                $priorityIcon = '';
+                                switch ($announcement['priority']) {
+                                    case 'urgent':
+                                        $priorityClass = 'border-danger bg-danger bg-opacity-10';
+                                        $priorityIcon = 'fas fa-exclamation-triangle text-danger';
+                                        break;
+                                    case 'high':
+                                        $priorityClass = 'border-warning bg-warning bg-opacity-10';
+                                        $priorityIcon = 'fas fa-exclamation-circle text-warning';
+                                        break;
+                                    case 'normal':
+                                        $priorityClass = 'border-info bg-info bg-opacity-10';
+                                        $priorityIcon = 'fas fa-info-circle text-info';
+                                        break;
+                                    case 'low':
+                                        $priorityClass = 'border-secondary bg-light';
+                                        $priorityIcon = 'fas fa-info text-secondary';
+                                        break;
+                                }
+                            ?>
+                            <div class="col-lg-4 col-md-6 col-12">
+                                <div class="card h-100 <?php echo $priorityClass; ?> announcement-card" style="cursor: pointer;" 
+                                     onclick="showAnnouncementModal(<?php echo htmlspecialchars(json_encode($announcement)); ?>)">
+                                    <div class="card-body p-3">
+                                        <div class="d-flex align-items-start mb-2">
+                                            <i class="<?php echo $priorityIcon; ?> me-2 mt-1"></i>
+                                            <div class="flex-grow-1">
+                                                <h6 class="card-title mb-1 text-truncate"><?php echo htmlspecialchars($announcement['title']); ?></h6>
+                                                <div class="announcement-preview text-muted small" style="height: 2.4rem; overflow: hidden; line-height: 1.2;">
+                                                    <?php 
+                                                    if ($announcement['is_rich_text']) {
+                                                        echo mb_substr(strip_tags($announcement['content']), 0, 60) . '...';
+                                                    } else {
+                                                        echo mb_substr(htmlspecialchars($announcement['content']), 0, 60) . '...';
+                                                    }
+                                                    ?>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <small class="text-muted">
+                                                <i class="fas fa-clock me-1"></i><?php echo date('m/d H:i', strtotime($announcement['created_at'])); ?>
+                                            </small>
+                                            <small class="text-muted">
+                                                <?php echo htmlspecialchars($announcement['created_by_name']); ?>
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <!-- 歡迎區塊 -->
         <div class="row mb-4">
             <div class="col-12">
@@ -387,27 +892,32 @@ $commissions = $db->fetchAll(
         <ul class="nav nav-pills nav-justified mb-4" id="mainTabs" role="tablist">
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="tasks-tab" data-bs-toggle="pill" data-bs-target="#tasks" type="button">
-                    <i class="fas fa-tasks me-2"></i>我的任務
+                    <i class="fas fa-tasks me-2"></i><span class="d-none d-md-inline">我的任務</span><span class="d-md-none">任務</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="announcements-tab" data-bs-toggle="pill" data-bs-target="#announcements" type="button">
+                    <i class="fas fa-bullhorn me-2"></i><span class="d-none d-md-inline">最新公告</span><span class="d-md-none">公告</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="attendance-tab" data-bs-toggle="pill" data-bs-target="#attendance" type="button">
-                    <i class="fas fa-clock me-2"></i>打卡系統
+                    <i class="fas fa-clock me-2"></i><span class="d-none d-md-inline">打卡系統</span><span class="d-md-none">打卡</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="discussions-tab" data-bs-toggle="pill" data-bs-target="#discussions" type="button">
-                    <i class="fas fa-comments me-2"></i>專案討論
+                    <i class="fas fa-comments me-2"></i><span class="d-none d-md-inline">專案討論</span><span class="d-md-none">討論</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="income-tab" data-bs-toggle="pill" data-bs-target="#income" type="button">
-                    <i class="fas fa-money-bill-wave me-2"></i>收入明細
+                    <i class="fas fa-money-bill-wave me-2"></i><span class="d-none d-md-inline">收入明細</span><span class="d-md-none">收入</span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="creation-tab" data-bs-toggle="pill" data-bs-target="#creation" type="button">
-                    <i class="fas fa-plus-circle me-2"></i>快速新增
+                    <i class="fas fa-plus-circle me-2"></i><span class="d-none d-md-inline">快速新增</span><span class="d-md-none">新增</span>
                 </button>
             </li>
         </ul>
@@ -508,19 +1018,106 @@ $commissions = $db->fetchAll(
                                                             </p>
                                                         <?php endif; ?>
                                                         
-                                                        <div class="d-flex gap-2">
+                                                        <div class="d-flex flex-wrap gap-2">
                                                             <button class="btn btn-primary btn-sm" onclick="openReportModal(<?php echo $task['id']; ?>, '<?php echo htmlspecialchars($task['title']); ?>')">
-                                                                <i class="fas fa-plus me-1"></i>新增回報
+                                                                <i class="fas fa-plus me-1"></i>
+                                                                <span class="d-none d-sm-inline">新增回報</span>
+                                                                <span class="d-sm-none">回報</span>
                                                             </button>
                                                             <button class="btn btn-outline-secondary btn-sm" onclick="viewReports(<?php echo $task['id']; ?>)">
-                                                                <i class="fas fa-history me-1"></i>查看紀錄
+                                                                <i class="fas fa-history me-1"></i>
+                                                                <span class="d-none d-sm-inline">查看紀錄</span>
+                                                                <span class="d-sm-none">紀錄</span>
                                                             </button>
                                                             <?php if ($task['project_id']): ?>
                                                                 <button class="btn btn-outline-info btn-sm" onclick="switchToDiscussion(<?php echo $task['project_id']; ?>)">
-                                                                    <i class="fas fa-comments me-1"></i>專案討論
+                                                                    <i class="fas fa-comments me-1"></i>
+                                                                    <span class="d-none d-sm-inline">專案討論</span>
+                                                                    <span class="d-sm-none">討論</span>
                                                                 </button>
                                                             <?php endif; ?>
                                                         </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 公告面板 -->
+            <div class="tab-pane fade" id="announcements" role="tabpanel">
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-bullhorn me-2"></i>最新公告
+                                    <span class="badge bg-primary ms-2"><?php echo count($announcements); ?></span>
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($announcements)): ?>
+                                    <div class="text-center py-5">
+                                        <i class="fas fa-bullhorn fa-3x text-muted mb-3"></i>
+                                        <h5 class="text-muted">目前沒有公告</h5>
+                                        <p class="text-muted">管理員尚未發布任何公告</p>
+                                    </div>
+                                <?php else: ?>
+                                    <div class="row">
+                                        <?php foreach ($announcements as $announcement): ?>
+                                            <?php
+                                            $priorityClass = '';
+                                            $priorityText = '';
+                                            switch ($announcement['priority']) {
+                                                case 'urgent':
+                                                    $priorityClass = 'border-danger';
+                                                    $priorityText = '緊急';
+                                                    break;
+                                                case 'high':
+                                                    $priorityClass = 'border-warning';
+                                                    $priorityText = '高';
+                                                    break;
+                                                case 'normal':
+                                                    $priorityClass = 'border-primary';
+                                                    $priorityText = '普通';
+                                                    break;
+                                                case 'low':
+                                                    $priorityClass = 'border-secondary';
+                                                    $priorityText = '低';
+                                                    break;
+                                            }
+                                            ?>
+                                            <div class="col-lg-6 col-md-12 mb-4">
+                                                <div class="card h-100 <?php echo $priorityClass; ?>" style="border-left: 4px solid;">
+                                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                                        <h6 class="mb-0 text-truncate me-2"><?php echo htmlspecialchars($announcement['title']); ?></h6>
+                                                        <span class="badge 
+                                                            <?php 
+                                                            echo $announcement['priority'] === 'urgent' ? 'bg-danger' : 
+                                                                ($announcement['priority'] === 'high' ? 'bg-warning text-dark' : 
+                                                                ($announcement['priority'] === 'normal' ? 'bg-primary' : 'bg-secondary')); 
+                                                            ?>">
+                                                            <?php echo $priorityText; ?>
+                                                        </span>
+                                                    </div>
+                                                    <div class="card-body">
+                                                        <div class="announcement-content" style="max-height: 200px; overflow-y: auto;">
+                                                            <?php if ($announcement['is_rich_text']): ?>
+                                                                <?php echo $announcement['content']; ?>
+                                                            <?php else: ?>
+                                                                <?php echo nl2br(htmlspecialchars($announcement['content'])); ?>
+                                                            <?php endif; ?>
+                                                        </div>
+                                                        <hr>
+                                                        <small class="text-muted">
+                                                            <i class="fas fa-user me-1"></i><?php echo htmlspecialchars($announcement['created_by_name']); ?>
+                                                            <i class="fas fa-clock ms-3 me-1"></i><?php echo date('Y/m/d H:i', strtotime($announcement['created_at'])); ?>
+                                                        </small>
                                                     </div>
                                                 </div>
                                             </div>
@@ -537,32 +1134,33 @@ $commissions = $db->fetchAll(
             <div class="tab-pane fade" id="attendance" role="tabpanel">
                 <!-- 今日打卡狀態 -->
                 <div class="row mb-4">
-                    <div class="col-md-8">
+                    <div class="col-lg-8 col-md-12 mb-3">
                         <div class="card">
                             <div class="card-header">
                                 <h5 class="mb-0">
                                     <i class="fas fa-calendar-day me-2"></i>今日打卡
-                                    <span class="text-muted small ms-2"><?php echo date('Y年m月d日 l'); ?></span>
+                                    <span class="text-muted small ms-2 d-none d-md-inline"><?php echo date('Y年m月d日 l'); ?></span>
+                                    <span class="text-muted small ms-2 d-md-none"><?php echo date('m/d'); ?></span>
                                 </h5>
                             </div>
                             <div class="card-body text-center">
                                 <div id="attendance-info" class="mb-4">
                                     <!-- 動態載入打卡信息 -->
                                 </div>
-                                <div class="d-flex gap-3 justify-content-center">
+                                <div class="d-flex gap-3 justify-content-center flex-column flex-md-row">
                                     <button class="btn btn-success btn-lg" id="check-in-btn" onclick="performCheckIn()">
-                                        <i class="fas fa-sign-in-alt me-2"></i>上班打卡
+                                        <i class="fas fa-sign-in-alt me-2"></i><span class="d-none d-sm-inline">上班打卡</span><span class="d-sm-none">上班</span>
                                     </button>
                                     <button class="btn btn-danger btn-lg" id="check-out-btn" onclick="performCheckOut()" disabled>
-                                        <i class="fas fa-sign-out-alt me-2"></i>下班打卡
+                                        <i class="fas fa-sign-out-alt me-2"></i><span class="d-none d-sm-inline">下班打卡</span><span class="d-sm-none">下班</span>
                                     </button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-lg-4 col-md-12">
                         <div class="row">
-                            <div class="col-12 mb-3">
+                            <div class="col-6 col-lg-12 mb-3">
                                 <div class="card text-white bg-info">
                                     <div class="card-body text-center">
                                         <h6 class="card-title">本月出勤天數</h6>
@@ -571,7 +1169,7 @@ $commissions = $db->fetchAll(
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-12">
+                            <div class="col-6 col-lg-12">
                                 <div class="card text-white bg-warning">
                                     <div class="card-body text-center">
                                         <h6 class="card-title">本月總工時</h6>
@@ -584,14 +1182,71 @@ $commissions = $db->fetchAll(
                     </div>
                 </div>
 
-                <!-- 打卡記錄 -->
-                <div class="row">
-                    <div class="col-md-6">
+                <!-- 加班系統 -->
+                <div class="row mb-4">
+                    <div class="col-12">
                         <div class="card">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <h6 class="mb-0"><i class="fas fa-list me-2"></i>本月打卡記錄</h6>
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-moon me-2"></i>加班管理
+                                    <span class="text-muted small ms-2 d-none d-md-inline">今日加班記錄</span>
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="overtime-info" class="mb-3">
+                                    <!-- 動態載入加班信息 -->
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-8 mb-3">
+                                        <label for="overtime-content" class="form-label">加班工作內容 <span class="text-danger">*</span></label>
+                                        <textarea class="form-control" id="overtime-content" rows="3" 
+                                                placeholder="請詳細描述加班工作內容..." required></textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">&nbsp;</label>
+                                        <div class="d-flex gap-2 flex-column">
+                                            <button class="btn btn-warning btn-lg" id="start-overtime-btn" onclick="startOvertime()">
+                                                <i class="fas fa-play me-2"></i>開始加班
+                                            </button>
+                                            <button class="btn btn-secondary btn-lg" id="end-overtime-btn" onclick="endOvertime()" disabled>
+                                                <i class="fas fa-stop me-2"></i>結束加班
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row mt-3">
+                                    <div class="col-md-6">
+                                        <div class="card text-white bg-dark">
+                                            <div class="card-body text-center py-2">
+                                                <h6 class="card-title mb-1">今日加班次數</h6>
+                                                <h4 class="mb-0" id="today-overtime-sessions">0</h4>
+                                                <small>次</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="card text-white bg-warning">
+                                            <div class="card-body text-center py-2">
+                                                <h6 class="card-title mb-1">今日加班時數</h6>
+                                                <h4 class="mb-0" id="today-overtime-hours">0</h4>
+                                                <small>小時</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 打卡與加班記錄 -->
+                <div class="row">
+                    <div class="col-lg-4 col-md-12 mb-4">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-column flex-md-row">
+                                <h6 class="mb-2 mb-md-0"><i class="fas fa-list me-2"></i>本月打卡記錄</h6>
                                 <input type="month" class="form-control form-control-sm" id="attendance-month-select" 
-                                       value="<?php echo date('Y-m'); ?>" onchange="loadAttendanceData()" style="width: auto;">
+                                       value="<?php echo date('Y-m'); ?>" onchange="loadAttendanceData()" style="width: auto; min-width: 150px;">
                             </div>
                             <div class="card-body">
                                 <div id="attendance-records-content" style="max-height: 400px; overflow-y: auto;">
@@ -602,7 +1257,23 @@ $commissions = $db->fetchAll(
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-lg-4 col-md-12 mb-4">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-column flex-md-row">
+                                <h6 class="mb-2 mb-md-0"><i class="fas fa-moon me-2"></i>本月加班記錄</h6>
+                                <input type="month" class="form-control form-control-sm" id="overtime-month-select" 
+                                       value="<?php echo date('Y-m'); ?>" onchange="loadOvertimeData()" style="width: auto; min-width: 150px;">
+                            </div>
+                            <div class="card-body">
+                                <div id="overtime-records-content" style="max-height: 400px; overflow-y: auto;">
+                                    <div class="text-center py-3">
+                                        <i class="fas fa-spinner fa-spin"></i> 載入中...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4 col-md-12 mb-4">
                         <div class="card">
                             <div class="card-header">
                                 <h6 class="mb-0"><i class="fas fa-chart-bar me-2"></i>統計圖表</h6>
@@ -620,7 +1291,7 @@ $commissions = $db->fetchAll(
             <!-- 專案討論面板 -->
             <div class="tab-pane fade" id="discussions" role="tabpanel">
                 <div class="row">
-                    <div class="col-md-3 mb-4">
+                    <div class="col-lg-3 col-md-4 mb-4">
                         <div class="card">
                             <div class="card-header">
                                 <h6 class="mb-0">我的專案</h6>
@@ -631,21 +1302,22 @@ $commissions = $db->fetchAll(
                                        data-project-id="<?php echo $project['id']; ?>"
                                        data-project-name="<?php echo htmlspecialchars($project['name']); ?>">
                                         <i class="fas fa-folder me-2"></i>
-                                        <?php echo htmlspecialchars($project['name']); ?>
+                                        <span class="d-none d-md-inline"><?php echo htmlspecialchars($project['name']); ?></span>
+                                        <span class="d-md-none"><?php echo mb_substr(htmlspecialchars($project['name']), 0, 8) . (mb_strlen($project['name']) > 8 ? '...' : ''); ?></span>
                                     </a>
                                 <?php endforeach; ?>
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-9">
+                    <div class="col-lg-9 col-md-8">
                         <div class="card">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <h6 class="mb-0">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-column flex-md-row">
+                                <h6 class="mb-2 mb-md-0">
                                     <i class="fas fa-comments me-2"></i>
                                     <span id="current-project-name">請選擇專案</span>
                                 </h6>
                                 <button class="btn btn-primary btn-sm" id="new-discussion-btn" style="display:none;" data-bs-toggle="modal" data-bs-target="#discussionModal">
-                                    <i class="fas fa-plus me-2"></i>發布討論
+                                    <i class="fas fa-plus me-2"></i><span class="d-none d-sm-inline">發布討論</span><span class="d-sm-none">發布</span>
                                 </button>
                             </div>
                             <div class="card-body">
@@ -834,7 +1506,8 @@ $commissions = $db->fetchAll(
                             <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" id="useRichText" onchange="toggleEditor()">
                                 <label class="form-check-label" for="useRichText">
-                                    使用富文本編輯器
+                                    <span class="d-none d-sm-inline">使用富文本編輯器</span>
+                                    <span class="d-sm-none">富文本</span>
                                 </label>
                             </div>
                             <textarea class="form-control" id="reportContent" name="content" rows="6" required 
@@ -852,12 +1525,13 @@ $commissions = $db->fetchAll(
                         
                         <div class="alert alert-info">
                             <i class="fas fa-info-circle me-2"></i>
-                            每次提交都會建立新的工作回報記錄，您可以針對同一個任務提交多次回報來記錄工作進度
+                            <span class="d-none d-md-inline">每次提交都會建立新的工作回報記錄，您可以針對同一個任務提交多次回報來記錄工作進度</span>
+                            <span class="d-md-none">可針對同一任務多次提交工作回報</span>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-primary">
+                    <div class="modal-footer flex-column flex-sm-row">
+                        <button type="button" class="btn btn-secondary w-100 w-sm-auto mb-2 mb-sm-0" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary w-100 w-sm-auto">
                             <i class="fas fa-save me-2"></i>提交回報
                         </button>
                     </div>
@@ -872,17 +1546,51 @@ $commissions = $db->fetchAll(
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
-                        <i class="fas fa-history me-2"></i>歷史回報紀錄
+                        <i class="fas fa-history me-2"></i>
+                        <span class="d-none d-sm-inline">歷史回報紀錄</span>
+                        <span class="d-sm-none">歷史回報</span>
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="historyContent">
+                    <div id="historyContent" class="history-content-responsive">
                         <div class="text-center">
                             <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
                             <p class="mt-2">載入中...</p>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 公告詳情 Modal -->
+    <div class="modal fade" id="announcementDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-bullhorn me-2"></i>
+                        <span id="modalAnnouncementTitle">公告詳情</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <span class="badge" id="modalAnnouncementPriority">普通</span>
+                        </div>
+                        <div class="text-muted small">
+                            <i class="fas fa-user me-1"></i><span id="modalAnnouncementAuthor"></span>
+                            <i class="fas fa-clock ms-3 me-1"></i><span id="modalAnnouncementDate"></span>
+                        </div>
+                    </div>
+                    <div id="modalAnnouncementContent" class="announcement-content">
+                        <!-- 公告內容將在這裡顯示 -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
                 </div>
             </div>
         </div>
@@ -966,9 +1674,12 @@ $commissions = $db->fetchAll(
         function initializeAttendance() {
             loadAttendanceStatus();
             loadAttendanceData();
+            loadOvertimeStatus();
+            loadOvertimeData();
             
             // 每30秒更新一次狀態
             setInterval(loadAttendanceStatus, 30000);
+            setInterval(loadOvertimeStatus, 30000);
         }
 
         // 載入打卡狀態
@@ -1337,6 +2048,298 @@ $commissions = $db->fetchAll(
                 'absent': 'bg-danger'
             };
             return classMap[status] || 'bg-secondary';
+        }
+
+        // === 加班系統函數 ===
+        
+        // 開始加班
+        function startOvertime() {
+            const workContent = document.getElementById('overtime-content').value.trim();
+            
+            if (!workContent) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: '請填寫工作內容',
+                    text: '加班需要填寫工作內容',
+                    confirmButtonColor: '#667eea'
+                });
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('action', 'start_overtime');
+            formData.append('work_content', workContent);
+            
+            fetch('dashboard.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: '加班開始',
+                        text: data.message,
+                        confirmButtonColor: '#667eea'
+                    });
+                    
+                    // 清空工作內容
+                    document.getElementById('overtime-content').value = '';
+                    
+                    // 重新載入加班狀態和數據
+                    loadOvertimeStatus();
+                    loadOvertimeData();
+                } else {
+                    Swal.fire({
+                        icon: 'error',
+                        title: '加班開始失敗',
+                        text: data.message,
+                        confirmButtonColor: '#667eea'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                Swal.fire({
+                    icon: 'error',
+                    title: '網路錯誤',
+                    text: '加班開始失敗，請重試',
+                    confirmButtonColor: '#667eea'
+                });
+            });
+        }
+        
+        // 結束加班
+        function endOvertime() {
+            const activeOvertimeId = document.getElementById('end-overtime-btn').dataset.overtimeId;
+            
+            if (!activeOvertimeId) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: '沒有進行中的加班',
+                    text: '請先開始加班',
+                    confirmButtonColor: '#667eea'
+                });
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('action', 'end_overtime');
+            formData.append('overtime_id', activeOvertimeId);
+            
+            fetch('dashboard.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: '加班結束',
+                        text: `${data.message}\\n加班時數: ${data.data.overtime_hours} 小時`,
+                        confirmButtonColor: '#667eea'
+                    });
+                    
+                    // 重新載入加班狀態和數據
+                    loadOvertimeStatus();
+                    loadOvertimeData();
+                } else {
+                    Swal.fire({
+                        icon: 'error',
+                        title: '加班結束失敗',
+                        text: data.message,
+                        confirmButtonColor: '#667eea'
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                Swal.fire({
+                    icon: 'error',
+                    title: '網路錯誤',
+                    text: '加班結束失敗，請重試',
+                    confirmButtonColor: '#667eea'
+                });
+            });
+        }
+        
+        // 載入加班狀態
+        function loadOvertimeStatus() {
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('action', 'get_overtime_status');
+            
+            fetch('dashboard.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayOvertimeStatus(data.data);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading overtime status:', error);
+            });
+        }
+        
+        // 顯示加班狀態
+        function displayOvertimeStatus(records) {
+            const infoDiv = document.getElementById('overtime-info');
+            const startBtn = document.getElementById('start-overtime-btn');
+            const endBtn = document.getElementById('end-overtime-btn');
+            const todaySessions = document.getElementById('today-overtime-sessions');
+            const todayHours = document.getElementById('today-overtime-hours');
+            
+            // 統計今日數據
+            const totalSessions = records.length;
+            const totalHours = records.reduce((sum, r) => sum + parseFloat(r.overtime_hours || 0), 0);
+            const activeRecord = records.find(r => r.status === 'started');
+            
+            todaySessions.textContent = totalSessions;
+            todayHours.textContent = totalHours.toFixed(1);
+            
+            if (activeRecord) {
+                // 有進行中的加班
+                const startTime = new Date(activeRecord.start_time);
+                const now = new Date();
+                const duration = Math.floor((now - startTime) / 1000);
+                const hours = Math.floor(duration / 3600);
+                const minutes = Math.floor((duration % 3600) / 60);
+                const seconds = duration % 60;
+                
+                infoDiv.innerHTML = `
+                    <div class="alert alert-warning mb-0">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <i class="fas fa-play me-2"></i>
+                                <strong>加班進行中</strong>
+                                <div class="small mt-1">
+                                    開始時間: ${startTime.toLocaleTimeString('zh-TW', { hour12: false })}
+                                </div>
+                                <div class="small">
+                                    工作內容: ${activeRecord.work_content}
+                                </div>
+                            </div>
+                            <div class="text-end">
+                                <div class="h5 mb-0" id="overtime-timer">
+                                    ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}
+                                </div>
+                                <small>進行時間</small>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                startBtn.disabled = true;
+                endBtn.disabled = false;
+                endBtn.dataset.overtimeId = activeRecord.id;
+                
+                // 啟動計時器
+                if (window.overtimeTimer) clearInterval(window.overtimeTimer);
+                window.overtimeTimer = setInterval(() => {
+                    const now = new Date();
+                    const duration = Math.floor((now - startTime) / 1000);
+                    const h = Math.floor(duration / 3600);
+                    const m = Math.floor((duration % 3600) / 60);
+                    const s = duration % 60;
+                    
+                    const timerElement = document.getElementById('overtime-timer');
+                    if (timerElement) {
+                        timerElement.textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                    }
+                }, 1000);
+                
+            } else {
+                // 沒有進行中的加班
+                infoDiv.innerHTML = `
+                    <div class="alert alert-info mb-0">
+                        <i class="fas fa-info-circle me-2"></i>
+                        今日尚未開始加班，填寫工作內容後可開始加班記錄
+                    </div>
+                `;
+                
+                startBtn.disabled = false;
+                endBtn.disabled = true;
+                endBtn.dataset.overtimeId = '';
+                
+                // 清除計時器
+                if (window.overtimeTimer) {
+                    clearInterval(window.overtimeTimer);
+                    window.overtimeTimer = null;
+                }
+            }
+        }
+        
+        // 載入加班數據
+        function loadOvertimeData() {
+            const month = document.getElementById('overtime-month-select').value;
+            
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('action', 'get_overtime_summary');
+            formData.append('month', month);
+            
+            fetch('dashboard.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayOvertimeRecords(data.data);
+                }
+            })
+            .catch(error => {
+                console.error('Error loading overtime data:', error);
+            });
+        }
+        
+        // 顯示加班記錄
+        function displayOvertimeRecords(data) {
+            const content = document.getElementById('overtime-records-content');
+            
+            if (!data.records || data.records.length === 0) {
+                content.innerHTML = '<div class="text-center py-3 text-muted">本月沒有加班記錄</div>';
+                return;
+            }
+            
+            let html = '';
+            data.records.forEach(record => {
+                const startTime = new Date(record.start_time).toLocaleTimeString('zh-TW', { hour12: false });
+                const endTime = record.end_time ? new Date(record.end_time).toLocaleTimeString('zh-TW', { hour12: false }) : '進行中';
+                const status = record.status === 'started' ? '進行中' : '已結束';
+                const statusClass = record.status === 'started' ? 'bg-warning' : 'bg-success';
+                
+                html += `
+                    <div class="card mb-2">
+                        <div class="card-body py-2">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <strong>${record.work_date}</strong>
+                                        <span class="badge ${statusClass}">${status}</span>
+                                    </div>
+                                    <div class="small text-muted mb-1">
+                                        ${startTime} - ${endTime}
+                                        ${record.overtime_hours ? `(${record.overtime_hours}h)` : ''}
+                                    </div>
+                                    <div class="small">
+                                        <strong>工作內容:</strong> ${record.work_content}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            content.innerHTML = html;
         }
 
         function ajaxSubmit(event, action, callback) {
@@ -1827,6 +2830,56 @@ $commissions = $db->fetchAll(
             };
             return badgeMap[status] || 'badge bg-secondary';
         }
+
+        // 公告相關函數
+        function showAnnouncementModal(announcement) {
+            // 設置標題
+            document.getElementById('modalAnnouncementTitle').textContent = announcement.title;
+            
+            // 設置優先級徽章
+            const priorityBadge = document.getElementById('modalAnnouncementPriority');
+            const priorityTexts = {
+                'urgent': '緊急',
+                'high': '高',
+                'normal': '普通',
+                'low': '低'
+            };
+            const priorityClasses = {
+                'urgent': 'bg-danger',
+                'high': 'bg-warning text-dark',
+                'normal': 'bg-primary',
+                'low': 'bg-secondary'
+            };
+            
+            priorityBadge.textContent = priorityTexts[announcement.priority] || '普通';
+            priorityBadge.className = 'badge ' + (priorityClasses[announcement.priority] || 'bg-primary');
+            
+            // 設置作者和日期
+            document.getElementById('modalAnnouncementAuthor').textContent = announcement.created_by_name;
+            document.getElementById('modalAnnouncementDate').textContent = new Date(announcement.created_at).toLocaleString('zh-TW');
+            
+            // 設置內容
+            const contentDiv = document.getElementById('modalAnnouncementContent');
+            if (announcement.is_rich_text == 1) {
+                contentDiv.innerHTML = announcement.content;
+            } else {
+                contentDiv.innerHTML = announcement.content.replace(/\n/g, '<br>');
+            }
+            
+            // 顯示 Modal
+            const modal = new bootstrap.Modal(document.getElementById('announcementDetailModal'));
+            modal.show();
+        }
+
+        // 頁面載入時的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 為公告卡片添加動畫效果
+            const announcementCards = document.querySelectorAll('.announcement-card');
+            announcementCards.forEach((card, index) => {
+                card.style.animationDelay = (index * 0.1) + 's';
+                card.classList.add('animate__animated', 'animate__fadeInUp');
+            });
+        });
     </script>
 </body>
 </html>

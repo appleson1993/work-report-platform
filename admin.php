@@ -2,8 +2,8 @@
 require_once 'config/database.php';
 require_once 'config/functions.php';
 
-// 檢查管理員權限
-requireAdmin();
+// 檢查管理員權限（使用安全增強版本）
+requireStrictAdmin();
 
 $db = new Database();
 
@@ -56,12 +56,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                     throw new Exception('無效的角色');
                 }
                 
+                // 取得原始使用者資料以記錄審計日誌
+                $user = $db->fetch('SELECT * FROM users WHERE id = ?', [$userId]);
+                if (!$user) {
+                    throw new Exception('使用者不存在');
+                }
+                
                 $db->execute('UPDATE users SET role = ? WHERE id = ?', [$role, $userId]);
+                
+                AuditLogger::log('user_role_updated', 
+                    "Updated user role: {$user['name']} ({$user['email']}) from {$user['role']} to {$role}");
+                
                 jsonResponse(true, '使用者角色更新成功！');
                 break;
                 
             case 'delete_task':
                 $taskId = getPostValueInt('task_id');
+                
+                // 取得任務資料以記錄審計日誌
+                $task = $db->fetch('SELECT * FROM tasks WHERE id = ?', [$taskId]);
+                if ($task) {
+                    AuditLogger::log('task_deleted', 
+                        "Deleted task: {$task['title']} (ID: {$taskId})");
+                }
+                
                 $db->execute('DELETE FROM tasks WHERE id = ?', [$taskId]);
                 jsonResponse(true, '任務刪除成功！');
                 break;
@@ -280,6 +298,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                 );
                 jsonResponse(true, '取得專案收入分配紀錄成功', $projectIncomes);
                 break;
+
+            case 'create_announcement':
+                $title = getPostValueSanitized('title');
+                $content = getPostValue('content'); // 不sanitize，保留富文本格式
+                $isRichText = getPostValueBool('is_rich_text');
+                $priority = getPostValue('priority') ?: 'normal';
+                $isActive = getPostValueBool('is_active', 1);
+
+                if (empty($title) || empty($content)) {
+                    throw new Exception('標題和內容不能為空');
+                }
+
+                $db->execute(
+                    'INSERT INTO announcements (title, content, is_rich_text, priority, is_active, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+                    [$title, $content, $isRichText, $priority, $isActive, $_SESSION['user_id']]
+                );
+                jsonResponse(true, '公告發布成功！');
+                break;
+
+            case 'get_announcements':
+                $includeInactive = getPostValue('include_inactive') === 'true';
+                $sql = "SELECT a.*, u.name as created_by_name FROM announcements a 
+                        JOIN users u ON a.created_by = u.id";
+                
+                if (!$includeInactive) {
+                    $sql .= " WHERE a.is_active = 1";
+                }
+                
+                $sql .= " ORDER BY a.priority DESC, a.created_at DESC";
+                
+                $announcements = $db->fetchAll($sql);
+                jsonResponse(true, '取得公告成功', $announcements);
+                break;
+
+            case 'update_announcement':
+                $id = getPostValueInt('id');
+                $title = getPostValueSanitized('title');
+                $content = getPostValue('content');
+                $isRichText = getPostValueBool('is_rich_text');
+                $priority = getPostValue('priority') ?: 'normal';
+                $isActive = getPostValueBool('is_active', 1);
+
+                if (!$id || empty($title) || empty($content)) {
+                    throw new Exception('請填寫所有必要欄位');
+                }
+
+                $db->execute(
+                    'UPDATE announcements SET title = ?, content = ?, is_rich_text = ?, priority = ?, is_active = ? WHERE id = ?',
+                    [$title, $content, $isRichText, $priority, $isActive, $id]
+                );
+                jsonResponse(true, '公告更新成功！');
+                break;
+
+            case 'delete_announcement':
+                $id = getPostValueInt('id');
+                if (!$id) {
+                    throw new Exception('缺少公告ID');
+                }
+                
+                $db->execute('DELETE FROM announcements WHERE id = ?', [$id]);
+                jsonResponse(true, '公告刪除成功！');
+                break;
                 
             default:
                 throw new Exception('無效的操作');
@@ -364,6 +444,93 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
+
+        /* RWD 優化 */
+        @media (max-width: 768px) {
+            .navbar-brand {
+                font-size: 1rem;
+            }
+            
+            .container-fluid {
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+            
+            .nav-pills .nav-link {
+                font-size: 0.875rem;
+                padding: 0.5rem 0.75rem;
+                margin-bottom: 0.25rem;
+            }
+            
+            .card-body {
+                padding: 1rem;
+            }
+            
+            .modal-dialog {
+                margin: 0.5rem;
+            }
+            
+            .table td, .table th {
+                padding: 0.5rem 0.25rem;
+                font-size: 0.875rem;
+            }
+            
+            .btn {
+                font-size: 0.875rem;
+                padding: 0.375rem 0.75rem;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .navbar-brand {
+                font-size: 0.875rem;
+            }
+            
+            .navbar-brand i {
+                display: none;
+            }
+            
+            .nav-pills {
+                flex-direction: column;
+            }
+            
+            .nav-pills .nav-link {
+                text-align: center;
+                border-radius: 0.375rem !important;
+            }
+            
+            .stat-card .card-body {
+                padding: 0.75rem;
+            }
+            
+            .modal-body {
+                padding: 1rem;
+            }
+            
+            .btn-group {
+                flex-wrap: wrap;
+            }
+            
+            .btn-group .btn {
+                margin-bottom: 0.25rem;
+            }
+        }
+
+        /* 表格響應式優化 */
+        .table-responsive {
+            border-radius: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .table-responsive table {
+                font-size: 0.8rem;
+            }
+            
+            .table-responsive .btn {
+                padding: 0.25rem 0.5rem;
+                font-size: 0.75rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -371,21 +538,31 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container-fluid">
             <a class="navbar-brand" href="#">
-                <i class="fas fa-user-shield me-2"></i>WorkLog Manager - 後台
+                <i class="fas fa-user-shield me-2"></i>
+                <span class="d-none d-md-inline">WorkLog Manager - 後台</span>
+                <span class="d-md-none">管理後台</span>
             </a>
-            <div class="navbar-nav ms-auto">
-                <span class="navbar-text me-3">
-                    <i class="fas fa-user-circle me-1"></i><?php echo $_SESSION['user_name']; ?>
-                </span>
-                <div class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                        <i class="fas fa-cog"></i>
-                    </a>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="logout.php">
-                            <i class="fas fa-sign-out-alt me-2"></i>登出
-                        </a></li>
-                    </ul>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <div class="navbar-nav ms-auto">
+                    <span class="navbar-text me-3">
+                        <i class="fas fa-user-circle me-1"></i>
+                        <span class="d-none d-sm-inline"><?php echo $_SESSION['user_name']; ?></span>
+                        <span class="d-sm-none"><?php echo mb_substr($_SESSION['user_name'], 0, 4); ?></span>
+                    </span>
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-cog"></i>
+                            <span class="d-none d-md-inline ms-1">設定</span>
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="logout.php">
+                                <i class="fas fa-sign-out-alt me-2"></i>登出
+                            </a></li>
+                        </ul>
+                    </div>
                 </div>
             </div>
         </div>
@@ -394,7 +571,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
     <div class="container-fluid my-4">
         <!-- 統計卡片 -->
         <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stat-card">
                     <div class="card-body text-center">
                         <i class="fas fa-users fa-2x mb-2"></i>
@@ -403,7 +580,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stat-card">
                     <div class="card-body text-center">
                         <i class="fas fa-tasks fa-2x mb-2"></i>
@@ -412,7 +589,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stat-card">
                     <div class="card-body text-center">
                         <i class="fas fa-folder fa-2x mb-2"></i>
@@ -421,7 +598,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stat-card">
                     <div class="card-body text-center">
                         <i class="fas fa-file-alt fa-2x mb-2"></i>
@@ -441,37 +618,58 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                         <ul class="nav nav-pills nav-justified mb-4" id="adminTabs" role="tablist">
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link active" id="dashboard-tab" data-bs-toggle="pill" data-bs-target="#dashboard" type="button" role="tab">
-                                    <i class="fas fa-tachometer-alt me-2"></i>儀表板
+                                    <i class="fas fa-tachometer-alt me-2"></i>
+                                    <span class="d-none d-lg-inline">儀表板</span>
+                                    <span class="d-lg-none">首頁</span>
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="users-tab" data-bs-toggle="pill" data-bs-target="#users" type="button" role="tab">
-                                    <i class="fas fa-users me-2"></i>使用者管理
+                                    <i class="fas fa-users me-2"></i>
+                                    <span class="d-none d-lg-inline">使用者管理</span>
+                                    <span class="d-lg-none">使用者</span>
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="projects-tab" data-bs-toggle="pill" data-bs-target="#projects" type="button" role="tab">
-                                    <i class="fas fa-folder me-2"></i>專案管理
+                                    <i class="fas fa-folder me-2"></i>
+                                    <span class="d-none d-lg-inline">專案管理</span>
+                                    <span class="d-lg-none">專案</span>
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="tasks-tab" data-bs-toggle="pill" data-bs-target="#tasks" type="button" role="tab">
-                                    <i class="fas fa-tasks me-2"></i>任務管理
+                                    <i class="fas fa-tasks me-2"></i>
+                                    <span class="d-none d-lg-inline">任務管理</span>
+                                    <span class="d-lg-none">任務</span>
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="reports-tab" data-bs-toggle="pill" data-bs-target="#reports" type="button" role="tab">
-                                    <i class="fas fa-file-alt me-2"></i>工作報告
+                                    <i class="fas fa-file-alt me-2"></i>
+                                    <span class="d-none d-lg-inline">工作報告</span>
+                                    <span class="d-lg-none">報告</span>
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="finance-tab" data-bs-toggle="pill" data-bs-target="#finance" type="button" role="tab">
-                                    <i class="fas fa-coins me-2"></i>財務管理
+                                    <i class="fas fa-coins me-2"></i>
+                                    <span class="d-none d-lg-inline">財務管理</span>
+                                    <span class="d-lg-none">財務</span>
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="announcements-tab" data-bs-toggle="pill" data-bs-target="#announcements" type="button" role="tab">
+                                    <i class="fas fa-bullhorn me-2"></i>
+                                    <span class="d-none d-lg-inline">公告管理</span>
+                                    <span class="d-lg-none">公告</span>
                                 </button>
                             </li>
                             <li class="nav-item" role="presentation">
                                 <a class="nav-link" href="attendance_admin.php">
-                                    <i class="fas fa-clock me-2"></i>打卡管理
+                                    <i class="fas fa-clock me-2"></i>
+                                    <span class="d-none d-lg-inline">打卡管理</span>
+                                    <span class="d-lg-none">打卡</span>
                                 </a>
                             </li>
                         </ul>
@@ -1022,6 +1220,93 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                                                                 <h5 class="text-muted">請使用篩選器查詢收入紀錄</h5>
                                                             </div>
                                                         </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 公告管理 -->
+                            <div class="tab-pane fade" id="announcements" role="tabpanel">
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="card">
+                                            <div class="card-header d-flex justify-content-between align-items-center">
+                                                <h6 class="mb-0">發布新公告</h6>
+                                                <button class="btn btn-sm btn-primary" onclick="resetAnnouncementForm()">
+                                                    <i class="fas fa-plus"></i>
+                                                </button>
+                                            </div>
+                                            <div class="card-body">
+                                                <form id="announcementForm">
+                                                    <input type="hidden" id="announcementId" name="id">
+                                                    
+                                                    <div class="mb-3">
+                                                        <label for="announcementTitle" class="form-label">公告標題 *</label>
+                                                        <input type="text" class="form-control" id="announcementTitle" name="title" required>
+                                                    </div>
+                                                    
+                                                    <div class="mb-3">
+                                                        <label for="announcementPriority" class="form-label">優先級</label>
+                                                        <select class="form-select" id="announcementPriority" name="priority">
+                                                            <option value="low">低</option>
+                                                            <option value="normal" selected>普通</option>
+                                                            <option value="high">高</option>
+                                                            <option value="urgent">緊急</option>
+                                                        </select>
+                                                    </div>
+                                                    
+                                                    <div class="mb-3">
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox" id="announcementRichText" name="is_rich_text" onchange="toggleAnnouncementEditor()">
+                                                            <label class="form-check-label" for="announcementRichText">
+                                                                使用富文本編輯器
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div class="mb-3">
+                                                        <label for="announcementContent" class="form-label">公告內容 *</label>
+                                                        <textarea class="form-control" id="announcementContent" name="content" rows="8" required placeholder="請輸入公告內容..."></textarea>
+                                                    </div>
+                                                    
+                                                    <div class="mb-3">
+                                                        <div class="form-check form-switch">
+                                                            <input class="form-check-input" type="checkbox" id="announcementActive" name="is_active" checked>
+                                                            <label class="form-check-label" for="announcementActive">
+                                                                立即發布
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <button type="submit" class="btn btn-primary w-100" id="announcementSubmitBtn">
+                                                        <i class="fas fa-bullhorn me-2"></i>發布公告
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-8">
+                                        <div class="card">
+                                            <div class="card-header d-flex justify-content-between align-items-center">
+                                                <h6 class="mb-0">
+                                                    <i class="fas fa-list me-2"></i>公告列表
+                                                </h6>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" id="showInactiveAnnouncements" onchange="loadAnnouncements()">
+                                                    <label class="form-check-label" for="showInactiveAnnouncements">
+                                                        顯示已停用
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="card-body">
+                                                <div id="announcementsList">
+                                                    <div class="text-center py-5">
+                                                        <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+                                                        <p class="mt-2">載入中...</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1797,6 +2082,290 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
             };
             return badgeMap[status] || 'bg-dark';
         }
+
+        // 公告管理相關函數
+        let announcementTinyMCE = null;
+
+        // 切換富文本編輯器
+        function toggleAnnouncementEditor() {
+            const useRichText = document.getElementById('announcementRichText').checked;
+            const textarea = document.getElementById('announcementContent');
+            
+            if (useRichText) {
+                // 初始化 TinyMCE
+                if (typeof tinymce !== 'undefined') {
+                    tinymce.init({
+                        selector: '#announcementContent',
+                        height: 300,
+                        menubar: false,
+                        plugins: [
+                            'advlist autolink lists link image charmap print preview anchor',
+                            'searchreplace visualblocks code fullscreen',
+                            'insertdatetime media table paste code help wordcount'
+                        ],
+                        toolbar: 'undo redo | formatselect | bold italic backcolor | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | removeformat | help',
+                        language: 'zh_TW',
+                        setup: function(editor) {
+                            announcementTinyMCE = editor;
+                        }
+                    });
+                } else {
+                    // 如果 TinyMCE 未載入，動態載入
+                    const script = document.createElement('script');
+                    script.src = 'https://cdn.tiny.cloud/1/sydjdldkoxd6ws2x6gfqtqkdrtkas4kf1e1mfwqrebyk4e57/tinymce/6/tinymce.min.js';
+                    script.onload = function() {
+                        toggleAnnouncementEditor(); // 載入完成後重新呼叫
+                    };
+                    document.head.appendChild(script);
+                }
+            } else {
+                // 移除 TinyMCE
+                if (announcementTinyMCE) {
+                    announcementTinyMCE.remove();
+                    announcementTinyMCE = null;
+                }
+            }
+        }
+
+        // 重置公告表單
+        function resetAnnouncementForm() {
+            document.getElementById('announcementForm').reset();
+            document.getElementById('announcementId').value = '';
+            document.getElementById('announcementSubmitBtn').innerHTML = '<i class="fas fa-bullhorn me-2"></i>發布公告';
+            
+            // 重置富文本編輯器
+            if (announcementTinyMCE) {
+                announcementTinyMCE.remove();
+                announcementTinyMCE = null;
+            }
+            document.getElementById('announcementRichText').checked = false;
+        }
+
+        // 載入公告列表
+        function loadAnnouncements() {
+            const includeInactive = document.getElementById('showInactiveAnnouncements').checked;
+            
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('action', 'get_announcements');
+            formData.append('include_inactive', includeInactive);
+            
+            fetchWithSpinner('announcementsList', formData, displayAnnouncements);
+        }
+
+        // 顯示公告列表
+        function displayAnnouncements(announcements) {
+            const container = document.getElementById('announcementsList');
+            
+            if (announcements.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-5">
+                        <i class="fas fa-bullhorn fa-3x text-muted mb-3"></i>
+                        <h5 class="text-muted">尚無公告</h5>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '';
+            announcements.forEach(announcement => {
+                const priorityBadge = getPriorityBadge(announcement.priority);
+                const statusBadge = announcement.is_active ? 'bg-success' : 'bg-secondary';
+                const statusText = announcement.is_active ? '啟用' : '停用';
+                
+                html += `
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-0">${announcement.title}</h6>
+                                <small class="text-muted">
+                                    由 ${announcement.created_by_name} 發布於 ${new Date(announcement.created_at).toLocaleString('zh-TW')}
+                                </small>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <span class="badge ${priorityBadge}">${getPriorityText(announcement.priority)}</span>
+                                <span class="badge ${statusBadge}">${statusText}</span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3" style="max-height: 200px; overflow-y: auto;">
+                                ${announcement.is_rich_text ? announcement.content : announcement.content.replace(/\n/g, '<br>')}
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-primary" onclick="editAnnouncement(${announcement.id})">
+                                    <i class="fas fa-edit"></i> 編輯
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteAnnouncement(${announcement.id})">
+                                    <i class="fas fa-trash"></i> 刪除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+
+        // 編輯公告
+        function editAnnouncement(id) {
+            // 先載入公告資料
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('action', 'get_announcements');
+            formData.append('include_inactive', 'true');
+            
+            fetch('admin.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const announcement = data.data.find(a => a.id == id);
+                    if (announcement) {
+                        document.getElementById('announcementId').value = announcement.id;
+                        document.getElementById('announcementTitle').value = announcement.title;
+                        document.getElementById('announcementPriority').value = announcement.priority;
+                        document.getElementById('announcementActive').checked = announcement.is_active == 1;
+                        document.getElementById('announcementRichText').checked = announcement.is_rich_text == 1;
+                        
+                        if (announcement.is_rich_text == 1) {
+                            toggleAnnouncementEditor();
+                            setTimeout(() => {
+                                if (announcementTinyMCE) {
+                                    announcementTinyMCE.setContent(announcement.content);
+                                }
+                            }, 500);
+                        } else {
+                            document.getElementById('announcementContent').value = announcement.content;
+                        }
+                        
+                        document.getElementById('announcementSubmitBtn').innerHTML = '<i class="fas fa-save me-2"></i>更新公告';
+                        
+                        // 滾動到表單
+                        document.querySelector('#announcements .col-md-4').scrollIntoView({ behavior: 'smooth' });
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('載入公告資料失敗:', error);
+                Swal.fire('錯誤', '載入公告資料失敗', 'error');
+            });
+        }
+
+        // 刪除公告
+        function deleteAnnouncement(id) {
+            Swal.fire({
+                title: '確定刪除？',
+                text: '此操作無法復原！',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: '確定刪除',
+                cancelButtonText: '取消'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    const formData = new FormData();
+                    formData.append('ajax', '1');
+                    formData.append('action', 'delete_announcement');
+                    formData.append('id', id);
+                    
+                    fetch('admin.php', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            Swal.fire('成功', data.message, 'success');
+                            loadAnnouncements();
+                        } else {
+                            Swal.fire('錯誤', data.message, 'error');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('刪除失敗:', error);
+                        Swal.fire('錯誤', '刪除失敗', 'error');
+                    });
+                }
+            });
+        }
+
+        // 提交公告表單
+        document.getElementById('announcementForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const announcementId = document.getElementById('announcementId').value;
+            
+            formData.append('ajax', '1');
+            formData.append('action', announcementId ? 'update_announcement' : 'create_announcement');
+            
+            if (announcementId) {
+                formData.append('id', announcementId);
+            }
+            
+            formData.append('title', document.getElementById('announcementTitle').value);
+            formData.append('priority', document.getElementById('announcementPriority').value);
+            formData.append('is_rich_text', document.getElementById('announcementRichText').checked);
+            formData.append('is_active', document.getElementById('announcementActive').checked);
+            
+            // 取得內容
+            let content;
+            if (announcementTinyMCE) {
+                content = announcementTinyMCE.getContent();
+            } else {
+                content = document.getElementById('announcementContent').value;
+            }
+            formData.append('content', content);
+            
+            fetch('admin.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Swal.fire('成功', data.message, 'success');
+                    resetAnnouncementForm();
+                    loadAnnouncements();
+                } else {
+                    Swal.fire('錯誤', data.message, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('提交失敗:', error);
+                Swal.fire('錯誤', '提交失敗', 'error');
+            });
+        });
+
+        // 優先級相關函數
+        function getPriorityBadge(priority) {
+            const badgeMap = {
+                'low': 'bg-secondary',
+                'normal': 'bg-primary',
+                'high': 'bg-warning text-dark',
+                'urgent': 'bg-danger'
+            };
+            return badgeMap[priority] || 'bg-secondary';
+        }
+
+        function getPriorityText(priority) {
+            const textMap = {
+                'low': '低',
+                'normal': '普通',
+                'high': '高',
+                'urgent': '緊急'
+            };
+            return textMap[priority] || '普通';
+        }
+
+        // 當切換到公告標籤時載入公告
+        document.getElementById('announcements-tab').addEventListener('click', function() {
+            loadAnnouncements();
+        });
     </script>
 </body>
 </html>
