@@ -19,22 +19,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
             $taskId = getPostValueInt('task_id');
             $content = getPostValue('content'); // 保持原始內容用於富文本
             $status = getPostValueSanitized('status');
-            $isRichText = getPostValue('is_rich_text') === 'true' ? 1 : 0;
+            $isRichText = getPostValue('is_rich_text') === 'true';
             
-            // 對於富文本，檢查去除HTML標籤後的內容；對於純文本，直接檢查
-            $contentToCheck = $isRichText ? strip_tags($content) : trim($content);
-            if (empty($contentToCheck)) {
+            if (empty(strip_tags($content))) {
                 throw new Exception('請填寫工作內容');
             }
             
-            // 新增工作回報記錄（每次都新增一筆新記錄）
+            // 新增回報（不再限制每日一次）
             $db->execute(
-                'INSERT INTO work_reports (task_id, user_id, report_date, content, status, is_rich_text, created_at) 
-                 VALUES (?, ?, ?, ?, ?, ?, NOW())',
+                'INSERT INTO work_reports (task_id, user_id, report_date, content, status, is_rich_text) VALUES (?, ?, ?, ?, ?, ?)',
                 [$taskId, $userId, date('Y-m-d'), $content, $status, $isRichText]
             );
             
-            // 更新任務狀態為最新提交的狀態
+            // 更新任務狀態
             $db->execute('UPDATE tasks SET status = ?, updated_at = NOW() WHERE id = ?', [$status, $taskId]);
             
             jsonResponse(true, '工作回報提交成功！');
@@ -117,136 +114,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                 'total' => $totalIncome,
                 'month' => $month
             ]);
-        } elseif ($action === 'create_project') {
-            $name = getPostValueSanitized('name');
-            $description = getPostValueSanitized('description');
-            if (empty($name)) {
-                throw new Exception('專案名稱不能為空');
-            }
-            $db->execute('INSERT INTO projects (name, description, created_by) VALUES (?, ?, ?)', [$name, $description, $userId]);
-            jsonResponse(true, '專案建立成功！');
-        } elseif ($action === 'create_task') {
-            $title = getPostValueSanitized('title');
-            $description = getPostValueSanitized('description');
-            $assignedUserId = getPostValueInt('assigned_user_id');
-            $projectId = getPostValueInt('project_id') ?: null;
-            $dueDate = getPostValue('due_date') ?: null;
-            if (empty($title) || !$assignedUserId) {
-                throw new Exception('請填寫必要欄位');
-            }
-            $db->execute(
-                'INSERT INTO tasks (title, description, assigned_user_id, project_id, due_date, created_by) VALUES (?, ?, ?, ?, ?, ?)',
-                [$title, $description, $assignedUserId, $projectId, $dueDate, $userId]
-            );
-            jsonResponse(true, '任務建立成功！');
-        } elseif ($action === 'get_all_users') {
-            $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
-            jsonResponse(true, '取得使用者列表成功', $users);
-            
-        } elseif ($action === 'check_in') {
-            $currentDate = date('Y-m-d');
-            $currentTime = date('Y-m-d H:i:s');
-            
-            // 檢查今天是否已經打卡
-            $existingRecord = $db->fetch(
-                'SELECT * FROM attendance_records WHERE user_id = ? AND work_date = ?',
-                [$userId, $currentDate]
-            );
-            
-            if ($existingRecord) {
-                if ($existingRecord['status'] === 'checked_in') {
-                    throw new Exception('您今天已經打過上班卡了');
-                } elseif ($existingRecord['status'] === 'checked_out') {
-                    throw new Exception('您今天已經下班了，無法重新上班');
-                }
-            }
-            
-            // 新增或更新打卡記錄
-            if ($existingRecord) {
-                $db->execute(
-                    'UPDATE attendance_records SET check_in_time = ?, status = ?, updated_at = NOW() WHERE id = ?',
-                    [$currentTime, 'checked_in', $existingRecord['id']]
-                );
-            } else {
-                $db->execute(
-                    'INSERT INTO attendance_records (user_id, work_date, check_in_time, status) VALUES (?, ?, ?, ?)',
-                    [$userId, $currentDate, $currentTime, 'checked_in']
-                );
-            }
-            
-            jsonResponse(true, '上班打卡成功！', ['check_in_time' => $currentTime]);
-            
-        } elseif ($action === 'check_out') {
-            $currentDate = date('Y-m-d');
-            $currentTime = date('Y-m-d H:i:s');
-            
-            // 檢查今天的打卡記錄
-            $existingRecord = $db->fetch(
-                'SELECT * FROM attendance_records WHERE user_id = ? AND work_date = ?',
-                [$userId, $currentDate]
-            );
-            
-            if (!$existingRecord) {
-                throw new Exception('您今天還沒有上班打卡');
-            }
-            
-            if ($existingRecord['status'] !== 'checked_in') {
-                throw new Exception('您今天還沒有上班或已經下班了');
-            }
-            
-            // 計算工作時間
-            $checkInTime = new DateTime($existingRecord['check_in_time']);
-            $checkOutTime = new DateTime($currentTime);
-            $workHours = ($checkOutTime->getTimestamp() - $checkInTime->getTimestamp()) / 3600;
-            
-            // 更新下班打卡
-            $db->execute(
-                'UPDATE attendance_records SET check_out_time = ?, work_hours = ?, status = ?, updated_at = NOW() WHERE id = ?',
-                [$currentTime, round($workHours, 2), 'checked_out', $existingRecord['id']]
-            );
-            
-            jsonResponse(true, '下班打卡成功！', [
-                'check_out_time' => $currentTime,
-                'work_hours' => round($workHours, 2)
-            ]);
-            
-        } elseif ($action === 'get_attendance_status') {
-            $currentDate = date('Y-m-d');
-            
-            $record = $db->fetch(
-                'SELECT * FROM attendance_records WHERE user_id = ? AND work_date = ?',
-                [$userId, $currentDate]
-            );
-            
-            jsonResponse(true, '取得打卡狀態成功', $record);
-            
-        } elseif ($action === 'get_attendance_summary') {
-            $month = getPostValue('month', date('Y-m'));
-            
-            // 獲取該月份的打卡記錄
-            $records = $db->fetchAll(
-                'SELECT * FROM attendance_records 
-                 WHERE user_id = ? AND work_date >= ? AND work_date < ? + INTERVAL 1 MONTH
-                 ORDER BY work_date DESC',
-                [$userId, $month . '-01', $month . '-01']
-            );
-            
-            // 計算統計數據
-            $totalDays = count($records);
-            $checkedInDays = count(array_filter($records, fn($r) => $r['status'] !== 'absent'));
-            $totalHours = array_sum(array_column($records, 'work_hours'));
-            $avgHours = $checkedInDays > 0 ? $totalHours / $checkedInDays : 0;
-            
-            jsonResponse(true, '取得打卡統計成功', [
-                'records' => $records,
-                'stats' => [
-                    'total_days' => $totalDays,
-                    'checked_in_days' => $checkedInDays,
-                    'total_hours' => round($totalHours, 2),
-                    'avg_hours' => round($avgHours, 2)
-                ],
-                'month' => $month
-            ]);
         }
         
     } catch (Exception $e) {
@@ -294,7 +161,7 @@ $commissions = $db->fetchAll(
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <!-- 富文本編輯器 -->
-    <script src="https://cdn.tiny.cloud/1/sydjdldkoxd6ws2x6gfqtqkdrtkas4kf1e1mfwqrebyk4e57/tinymce/6/tinymce.min.js" referrerpolicy="origin"></script>
+    <script src="https://cdn.tiny.cloud/1/no-api-key/tinymce/6/tinymce.min.js" referrerpolicy="origin"></script>
     <style>
         body {
             background-color: #f8f9fc;
@@ -343,19 +210,6 @@ $commissions = $db->fetchAll(
                 <i class="fas fa-clipboard-list me-2"></i>WorkLog Manager
             </a>
             <div class="navbar-nav ms-auto">
-                <!-- 打卡狀態顯示 -->
-                <div class="nav-item me-3">
-                    <div class="nav-link text-white" id="attendance-status">
-                        <div id="attendance-display">
-                            <i class="fas fa-clock me-1"></i>
-                            <span id="status-text">檢查中...</span>
-                            <div id="work-time" class="small" style="display: none;">
-                                工作時間: <span id="work-duration">00:00:00</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
                 <div class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                         <i class="fas fa-user-circle me-2"></i><?php echo $_SESSION['user_name']; ?>
@@ -391,11 +245,6 @@ $commissions = $db->fetchAll(
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="attendance-tab" data-bs-toggle="pill" data-bs-target="#attendance" type="button">
-                    <i class="fas fa-clock me-2"></i>打卡系統
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="discussions-tab" data-bs-toggle="pill" data-bs-target="#discussions" type="button">
                     <i class="fas fa-comments me-2"></i>專案討論
                 </button>
@@ -403,11 +252,6 @@ $commissions = $db->fetchAll(
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="income-tab" data-bs-toggle="pill" data-bs-target="#income" type="button">
                     <i class="fas fa-money-bill-wave me-2"></i>收入明細
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="creation-tab" data-bs-toggle="pill" data-bs-target="#creation" type="button">
-                    <i class="fas fa-plus-circle me-2"></i>快速新增
                 </button>
             </li>
         </ul>
@@ -527,90 +371,6 @@ $commissions = $db->fetchAll(
                                         <?php endforeach; ?>
                                     </div>
                                 <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 打卡系統面板 -->
-            <div class="tab-pane fade" id="attendance" role="tabpanel">
-                <!-- 今日打卡狀態 -->
-                <div class="row mb-4">
-                    <div class="col-md-8">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="mb-0">
-                                    <i class="fas fa-calendar-day me-2"></i>今日打卡
-                                    <span class="text-muted small ms-2"><?php echo date('Y年m月d日 l'); ?></span>
-                                </h5>
-                            </div>
-                            <div class="card-body text-center">
-                                <div id="attendance-info" class="mb-4">
-                                    <!-- 動態載入打卡信息 -->
-                                </div>
-                                <div class="d-flex gap-3 justify-content-center">
-                                    <button class="btn btn-success btn-lg" id="check-in-btn" onclick="performCheckIn()">
-                                        <i class="fas fa-sign-in-alt me-2"></i>上班打卡
-                                    </button>
-                                    <button class="btn btn-danger btn-lg" id="check-out-btn" onclick="performCheckOut()" disabled>
-                                        <i class="fas fa-sign-out-alt me-2"></i>下班打卡
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <div class="row">
-                            <div class="col-12 mb-3">
-                                <div class="card text-white bg-info">
-                                    <div class="card-body text-center">
-                                        <h6 class="card-title">本月出勤天數</h6>
-                                        <h3 class="mb-0" id="monthly-days">-</h3>
-                                        <small>天</small>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-12">
-                                <div class="card text-white bg-warning">
-                                    <div class="card-body text-center">
-                                        <h6 class="card-title">本月總工時</h6>
-                                        <h3 class="mb-0" id="monthly-hours">-</h3>
-                                        <small>小時</small>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 打卡記錄 -->
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header d-flex justify-content-between align-items-center">
-                                <h6 class="mb-0"><i class="fas fa-list me-2"></i>本月打卡記錄</h6>
-                                <input type="month" class="form-control form-control-sm" id="attendance-month-select" 
-                                       value="<?php echo date('Y-m'); ?>" onchange="loadAttendanceData()" style="width: auto;">
-                            </div>
-                            <div class="card-body">
-                                <div id="attendance-records-content" style="max-height: 400px; overflow-y: auto;">
-                                    <div class="text-center py-3">
-                                        <i class="fas fa-spinner fa-spin"></i> 載入中...
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0"><i class="fas fa-chart-bar me-2"></i>統計圖表</h6>
-                            </div>
-                            <div class="card-body">
-                                <div id="attendance-stats">
-                                    <!-- 統計數據將在這裡顯示 -->
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -740,73 +500,6 @@ $commissions = $db->fetchAll(
                     </div>
                 </div>
             </div>
-
-            <!-- 快速新增面板 -->
-            <div class="tab-pane fade" id="creation" role="tabpanel">
-                <div class="row">
-                    <!-- 新增專案 -->
-                    <div class="col-md-6 mb-4">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0"><i class="fas fa-folder-plus me-2"></i>新增專案</h6>
-                            </div>
-                            <div class="card-body">
-                                <form id="userProjectForm">
-                                    <div class="mb-3">
-                                        <label for="userProjectName" class="form-label">專案名稱 *</label>
-                                        <input type="text" class="form-control" id="userProjectName" name="name" required>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="userProjectDescription" class="form-label">專案描述</label>
-                                        <textarea class="form-control" id="userProjectDescription" name="description" rows="3"></textarea>
-                                    </div>
-                                    <button type="submit" class="btn btn-primary w-100">建立專案</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- 新增任務 -->
-                    <div class="col-md-6 mb-4">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0"><i class="fas fa-tasks me-2"></i>新增任務</h6>
-                            </div>
-                            <div class="card-body">
-                                <form id="userTaskForm">
-                                    <div class="mb-3">
-                                        <label for="userTaskTitle" class="form-label">任務標題 *</label>
-                                        <input type="text" class="form-control" id="userTaskTitle" name="title" required>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="userTaskDescription" class="form-label">任務描述</label>
-                                        <textarea class="form-control" id="userTaskDescription" name="description" rows="3"></textarea>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="userAssignedUser" class="form-label">指派同事 *</label>
-                                        <select class="form-select" id="userAssignedUser" name="assigned_user_id" required>
-                                            <option value="">正在載入同事列表...</option>
-                                        </select>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="userTaskProject" class="form-label">所屬專案</label>
-                                        <select class="form-select" id="userTaskProject" name="project_id">
-                                            <option value="">無專案</option>
-                                            <?php foreach ($userProjects as $project): ?>
-                                                <option value="<?php echo $project['id']; ?>"><?php echo htmlspecialchars($project['name']); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="userDueDate" class="form-label">截止日期</label>
-                                        <input type="date" class="form-control" id="userDueDate" name="due_date">
-                                    </div>
-                                    <button type="submit" class="btn btn-primary w-100">建立任務</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
@@ -852,7 +545,7 @@ $commissions = $db->fetchAll(
                         
                         <div class="alert alert-info">
                             <i class="fas fa-info-circle me-2"></i>
-                            每次提交都會建立新的工作回報記錄，您可以針對同一個任務提交多次回報來記錄工作進度
+                            現在可以多次提交工作回報，每次提交都會建立新的紀錄
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -925,17 +618,11 @@ $commissions = $db->fetchAll(
     <script>
         let currentProjectId = null;
         let richTextEditor = null;
-        let attendanceTimer = null;
-        let attendanceStartTime = null;
         
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             // 載入當月收入
             loadIncomeData();
-            loadAllUsers();
-            
-            // 初始化打卡系統
-            initializeAttendance();
             
             // 專案選擇事件
             document.querySelectorAll('.project-item').forEach(item => {
@@ -946,461 +633,14 @@ $commissions = $db->fetchAll(
                     selectProject(projectId, projectName);
                 });
             });
-
-            // 員工新增專案表單
-            document.getElementById('userProjectForm').addEventListener('submit', function(e) {
-                ajaxSubmit(e, 'create_project', () => {
-                    Swal.fire('成功', '專案已建立', 'success').then(() => location.reload());
-                });
-            });
-
-            // 員工新增任務表單
-            document.getElementById('userTaskForm').addEventListener('submit', function(e) {
-                ajaxSubmit(e, 'create_task', () => {
-                    Swal.fire('成功', '任務已建立並指派', 'success').then(() => location.reload());
-                });
-            });
         });
-
-        // 初始化打卡系統
-        function initializeAttendance() {
-            loadAttendanceStatus();
-            loadAttendanceData();
-            
-            // 每30秒更新一次狀態
-            setInterval(loadAttendanceStatus, 30000);
-        }
-
-        // 載入打卡狀態
-        function loadAttendanceStatus() {
-            const formData = new FormData();
-            formData.append('ajax', '1');
-            formData.append('action', 'get_attendance_status');
-            
-            fetch('dashboard.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    updateAttendanceUI(data.data);
-                }
-            })
-            .catch(error => console.error('載入打卡狀態失敗:', error));
-        }
-
-        // 更新打卡界面
-        function updateAttendanceUI(record) {
-            const statusText = document.getElementById('status-text');
-            const workTime = document.getElementById('work-time');
-            const workDuration = document.getElementById('work-duration');
-            const checkInBtn = document.getElementById('check-in-btn');
-            const checkOutBtn = document.getElementById('check-out-btn');
-            const attendanceInfo = document.getElementById('attendance-info');
-            
-            if (!record) {
-                // 未打卡
-                statusText.innerHTML = '<span class="text-warning">未打卡</span>';
-                workTime.style.display = 'none';
-                checkInBtn.disabled = false;
-                checkOutBtn.disabled = true;
-                attendanceInfo.innerHTML = `
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle me-2"></i>
-                        您今天還沒有打卡，請點擊上班打卡開始工作
-                    </div>
-                `;
-                
-                // 停止計時器
-                if (attendanceTimer) {
-                    clearInterval(attendanceTimer);
-                    attendanceTimer = null;
-                }
-            } else if (record.status === 'checked_in') {
-                // 已上班
-                statusText.innerHTML = '<span class="text-success">已上班</span>';
-                workTime.style.display = 'block';
-                checkInBtn.disabled = true;
-                checkOutBtn.disabled = false;
-                
-                const checkInTime = new Date(record.check_in_time);
-                attendanceStartTime = checkInTime;
-                
-                attendanceInfo.innerHTML = `
-                    <div class="alert alert-success">
-                        <i class="fas fa-check-circle me-2"></i>
-                        <strong>上班時間：</strong>${checkInTime.toLocaleString('zh-TW')}
-                        <br>
-                        <small class="text-muted">請記得下班時打卡</small>
-                    </div>
-                `;
-                
-                // 開始計時器
-                startWorkTimer();
-            } else if (record.status === 'checked_out') {
-                // 已下班
-                statusText.innerHTML = '<span class="text-secondary">已下班</span>';
-                workTime.style.display = 'none';
-                checkInBtn.disabled = true;
-                checkOutBtn.disabled = true;
-                
-                const checkInTime = new Date(record.check_in_time);
-                const checkOutTime = new Date(record.check_out_time);
-                
-                attendanceInfo.innerHTML = `
-                    <div class="alert alert-secondary">
-                        <i class="fas fa-check-double me-2"></i>
-                        <strong>上班時間：</strong>${checkInTime.toLocaleString('zh-TW')}
-                        <br>
-                        <strong>下班時間：</strong>${checkOutTime.toLocaleString('zh-TW')}
-                        <br>
-                        <strong>工作時數：</strong>${record.work_hours} 小時
-                    </div>
-                `;
-                
-                // 停止計時器
-                if (attendanceTimer) {
-                    clearInterval(attendanceTimer);
-                    attendanceTimer = null;
-                }
-            }
-        }
-
-        // 開始工作計時器
-        function startWorkTimer() {
-            if (attendanceTimer) {
-                clearInterval(attendanceTimer);
-            }
-            
-            attendanceTimer = setInterval(function() {
-                if (attendanceStartTime) {
-                    const now = new Date();
-                    const diff = now - attendanceStartTime;
-                    const hours = Math.floor(diff / 3600000);
-                    const minutes = Math.floor((diff % 3600000) / 60000);
-                    const seconds = Math.floor((diff % 60000) / 1000);
-                    
-                    const timeString = String(hours).padStart(2, '0') + ':' + 
-                                     String(minutes).padStart(2, '0') + ':' + 
-                                     String(seconds).padStart(2, '0');
-                    
-                    document.getElementById('work-duration').textContent = timeString;
-                }
-            }, 1000);
-        }
-
-        // 上班打卡
-        function performCheckIn() {
-            Swal.fire({
-                title: '確認上班打卡',
-                text: '確定要進行上班打卡嗎？',
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonColor: '#28a745',
-                cancelButtonColor: '#6c757d',
-                confirmButtonText: '確定打卡',
-                cancelButtonText: '取消'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    const formData = new FormData();
-                    formData.append('ajax', '1');
-                    formData.append('action', 'check_in');
-                    
-                    fetch('dashboard.php', {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            Swal.fire({
-                                icon: 'success',
-                                title: '上班打卡成功！',
-                                text: '祝您今天工作順利',
-                                confirmButtonColor: '#667eea'
-                            });
-                            loadAttendanceStatus();
-                            loadAttendanceData();
-                        } else {
-                            Swal.fire({
-                                icon: 'error',
-                                title: '打卡失敗',
-                                text: data.message,
-                                confirmButtonColor: '#667eea'
-                            });
-                        }
-                    })
-                    .catch(error => {
-                        console.error('打卡錯誤:', error);
-                        Swal.fire({
-                            icon: 'error',
-                            title: '網路錯誤',
-                            text: '打卡失敗，請重試',
-                            confirmButtonColor: '#667eea'
-                        });
-                    });
-                }
-            });
-        }
-
-        // 下班打卡
-        function performCheckOut() {
-            Swal.fire({
-                title: '確認下班打卡',
-                text: '確定要進行下班打卡嗎？',
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonColor: '#dc3545',
-                cancelButtonColor: '#6c757d',
-                confirmButtonText: '確定打卡',
-                cancelButtonText: '取消'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    const formData = new FormData();
-                    formData.append('ajax', '1');
-                    formData.append('action', 'check_out');
-                    
-                    fetch('dashboard.php', {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            Swal.fire({
-                                icon: 'success',
-                                title: '下班打卡成功！',
-                                html: `今日工作時數：<strong>${data.data.work_hours}</strong> 小時<br>辛苦了！`,
-                                confirmButtonColor: '#667eea'
-                            });
-                            loadAttendanceStatus();
-                            loadAttendanceData();
-                        } else {
-                            Swal.fire({
-                                icon: 'error',
-                                title: '打卡失敗',
-                                text: data.message,
-                                confirmButtonColor: '#667eea'
-                            });
-                        }
-                    })
-                    .catch(error => {
-                        console.error('打卡錯誤:', error);
-                        Swal.fire({
-                            icon: 'error',
-                            title: '網路錯誤',
-                            text: '打卡失敗，請重試',
-                            confirmButtonColor: '#667eea'
-                        });
-                    });
-                }
-            });
-        }
-
-        // 載入打卡數據
-        function loadAttendanceData() {
-            const month = document.getElementById('attendance-month-select').value;
-            
-            const formData = new FormData();
-            formData.append('ajax', '1');
-            formData.append('action', 'get_attendance_summary');
-            formData.append('month', month);
-            
-            fetch('dashboard.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    displayAttendanceData(data.data);
-                } else {
-                    console.error('載入打卡數據失敗:', data.message);
-                }
-            })
-            .catch(error => console.error('載入打卡數據失敗:', error));
-        }
-
-        // 顯示打卡數據
-        function displayAttendanceData(data) {
-            // 更新統計數字
-            document.getElementById('monthly-days').textContent = data.stats.checked_in_days;
-            document.getElementById('monthly-hours').textContent = data.stats.total_hours;
-            
-            // 顯示記錄列表
-            const content = document.getElementById('attendance-records-content');
-            
-            if (data.records.length === 0) {
-                content.innerHTML = `
-                    <div class="text-center py-4">
-                        <i class="fas fa-calendar-times fa-3x text-muted mb-3"></i>
-                        <h5 class="text-muted">本月暫無打卡記錄</h5>
-                    </div>
-                `;
-                return;
-            }
-            
-            let html = '';
-            data.records.forEach(record => {
-                const statusIcon = getAttendanceStatusIcon(record.status);
-                const statusText = getAttendanceStatusText(record.status);
-                const statusClass = getAttendanceStatusClass(record.status);
-                
-                const checkInTime = record.check_in_time ? new Date(record.check_in_time).toLocaleTimeString('zh-TW', { hour12: false }) : '-';
-                const checkOutTime = record.check_out_time ? new Date(record.check_out_time).toLocaleTimeString('zh-TW', { hour12: false }) : '-';
-                
-                html += `
-                    <div class="card mb-2">
-                        <div class="card-body py-2">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <strong>${record.work_date}</strong>
-                                    <span class="badge ${statusClass} ms-2">${statusIcon} ${statusText}</span>
-                                </div>
-                                <div class="text-end small">
-                                    <div>上班: ${checkInTime}</div>
-                                    <div>下班: ${checkOutTime}</div>
-                                    ${record.work_hours ? `<div class="text-primary"><strong>${record.work_hours}h</strong></div>` : ''}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-            
-            content.innerHTML = html;
-            
-            // 更新統計圖表
-            displayAttendanceStats(data.stats);
-        }
-
-        // 顯示統計圖表
-        function displayAttendanceStats(stats) {
-            const statsContent = document.getElementById('attendance-stats');
-            
-            statsContent.innerHTML = `
-                <div class="row text-center">
-                    <div class="col-6 mb-3">
-                        <div class="border rounded p-2">
-                            <h6 class="text-muted mb-1">出勤率</h6>
-                            <h4 class="text-primary mb-0">${Math.round((stats.checked_in_days / new Date().getDate()) * 100)}%</h4>
-                        </div>
-                    </div>
-                    <div class="col-6 mb-3">
-                        <div class="border rounded p-2">
-                            <h6 class="text-muted mb-1">平均工時</h6>
-                            <h4 class="text-warning mb-0">${stats.avg_hours}h</h4>
-                        </div>
-                    </div>
-                </div>
-                <div class="mt-3">
-                    <h6 class="text-muted">本月概況</h6>
-                    <div class="progress mb-2" style="height: 20px;">
-                        <div class="progress-bar bg-success" role="progressbar" 
-                             style="width: ${(stats.checked_in_days / new Date().getDate()) * 100}%">
-                            ${stats.checked_in_days} 天
-                        </div>
-                    </div>
-                    <small class="text-muted">
-                        總計 ${stats.total_hours} 小時 / ${stats.checked_in_days} 天
-                    </small>
-                </div>
-            `;
-        }
-
-        // 獲取打卡狀態圖標
-        function getAttendanceStatusIcon(status) {
-            const iconMap = {
-                'checked_in': '<i class="fas fa-play"></i>',
-                'checked_out': '<i class="fas fa-stop"></i>',
-                'absent': '<i class="fas fa-times"></i>'
-            };
-            return iconMap[status] || '<i class="fas fa-question"></i>';
-        }
-
-        // 獲取打卡狀態文字
-        function getAttendanceStatusText(status) {
-            const textMap = {
-                'checked_in': '上班中',
-                'checked_out': '正常',
-                'absent': '缺席'
-            };
-            return textMap[status] || '未知';
-        }
-
-        // 獲取打卡狀態樣式
-        function getAttendanceStatusClass(status) {
-            const classMap = {
-                'checked_in': 'bg-warning',
-                'checked_out': 'bg-success',
-                'absent': 'bg-danger'
-            };
-            return classMap[status] || 'bg-secondary';
-        }
-
-        function ajaxSubmit(event, action, callback) {
-            event.preventDefault();
-            const form = event.target;
-            const formData = new FormData(form);
-            formData.append('ajax', '1');
-            formData.append('action', action);
-
-            fetch('dashboard.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    if (callback) callback(data.data);
-                } else {
-                    Swal.fire({
-                        icon: 'error',
-                        title: '錯誤',
-                        text: data.message,
-                        confirmButtonColor: '#667eea'
-                    });
-                }
-            });
-        }
-
-        // 載入所有使用者 (同事)
-        function loadAllUsers() {
-            const formData = new FormData();
-            formData.append('ajax', '1');
-            formData.append('action', 'get_all_users');
-            
-            fetch('dashboard.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    const select = document.getElementById('userAssignedUser');
-                    select.innerHTML = '<option value="">選擇一位同事</option>';
-                    data.data.forEach(user => {
-                        const option = document.createElement('option');
-                        option.value = user.id;
-                        option.textContent = user.name;
-                        select.appendChild(option);
-                    });
-                }
-            });
-        }
 
         // 切換富文本編輯器
         function toggleEditor() {
             const useRichText = document.getElementById('useRichText').checked;
             const textarea = document.getElementById('reportContent');
             
-            console.log('toggleEditor called, useRichText:', useRichText);
-            
             if (useRichText) {
-                // 移除 required 屬性，避免瀏覽器驗證錯誤
-                textarea.removeAttribute('required');
-                
                 // 初始化 TinyMCE
                 tinymce.init({
                     selector: '#reportContent',
@@ -1413,43 +653,31 @@ $commissions = $db->fetchAll(
                     ],
                     toolbar: 'undo redo | formatselect | bold italic backcolor | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | removeformat | help',
                     setup: function (editor) {
-                        console.log('TinyMCE editor setup completed');
                         richTextEditor = editor;
-                    },
-                    init_instance_callback: function (editor) {
-                        console.log('TinyMCE editor initialized:', editor.id);
                     }
                 });
             } else {
                 // 移除 TinyMCE
                 if (richTextEditor) {
-                    console.log('Removing TinyMCE editor');
                     tinymce.remove('#reportContent');
                     richTextEditor = null;
                 }
-                
-                // 恢復 required 屬性
-                textarea.setAttribute('required', '');
             }
         }
 
         // 開啟回報 Modal
         function openReportModal(taskId, taskTitle) {
-            // 重置編輯器
-            if (richTextEditor) {
-                tinymce.remove('#reportContent');
-                richTextEditor = null;
-            }
-            
-            // 設置表單值
             document.getElementById('reportTaskId').value = taskId;
             document.getElementById('reportTaskTitle').value = taskTitle;
             document.getElementById('reportContent').value = '';
             document.getElementById('reportStatus').value = 'in_progress';
             document.getElementById('useRichText').checked = false;
             
-            // 確保 textarea 有 required 屬性
-            document.getElementById('reportContent').setAttribute('required', '');
+            // 重置編輯器
+            if (richTextEditor) {
+                tinymce.remove('#reportContent');
+                richTextEditor = null;
+            }
             
             new bootstrap.Modal(document.getElementById('reportModal')).show();
         }
@@ -1458,44 +686,12 @@ $commissions = $db->fetchAll(
         document.getElementById('reportForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
-            let content = '';
-            const useRichText = document.getElementById('useRichText').checked;
+            let content = document.getElementById('reportContent').value;
             
-            console.log('Submitting report, useRichText:', useRichText);
-            console.log('richTextEditor exists:', !!richTextEditor);
-            
-            // 根據是否使用富文本來獲取內容
-            if (useRichText && richTextEditor) {
+            // 如果使用富文本編輯器，獲取編輯器內容
+            if (richTextEditor) {
                 content = richTextEditor.getContent();
-                console.log('Got content from TinyMCE:', content);
-            } else {
-                content = document.getElementById('reportContent').value;
-                console.log('Got content from textarea:', content);
             }
-            
-            // 檢查內容是否為空
-            const contentToCheck = useRichText ? content.replace(/<[^>]*>/g, '').trim() : content.trim();
-            console.log('Content to check:', contentToCheck);
-            
-            if (!contentToCheck) {
-                Swal.fire({
-                    icon: 'warning',
-                    title: '提醒',
-                    text: '請填寫工作內容',
-                    confirmButtonColor: '#667eea'
-                });
-                return;
-            }
-            
-            // 顯示提交中的訊息
-            Swal.fire({
-                title: '提交中...',
-                text: '正在提交工作回報',
-                allowOutsideClick: false,
-                didOpen: () => {
-                    Swal.showLoading();
-                }
-            });
             
             const formData = new FormData();
             formData.append('ajax', '1');
@@ -1503,7 +699,7 @@ $commissions = $db->fetchAll(
             formData.append('task_id', document.getElementById('reportTaskId').value);
             formData.append('content', content);
             formData.append('status', document.getElementById('reportStatus').value);
-            formData.append('is_rich_text', useRichText ? 'true' : 'false');
+            formData.append('is_rich_text', document.getElementById('useRichText').checked);
             
             fetch('dashboard.php', {
                 method: 'POST',
@@ -1511,8 +707,6 @@ $commissions = $db->fetchAll(
             })
             .then(response => response.json())
             .then(data => {
-                Swal.close(); // 關閉載入訊息
-                
                 if (data.success) {
                     Swal.fire({
                         icon: 'success',
@@ -1522,7 +716,6 @@ $commissions = $db->fetchAll(
                     }).then(() => {
                         bootstrap.Modal.getInstance(document.getElementById('reportModal')).hide();
                         // 可以選擇性重新載入頁面
-                        location.reload();
                     });
                 } else {
                     Swal.fire({
@@ -1532,16 +725,6 @@ $commissions = $db->fetchAll(
                         confirmButtonColor: '#667eea'
                     });
                 }
-            })
-            .catch(error => {
-                Swal.close(); // 關閉載入訊息
-                console.error('提交錯誤:', error);
-                Swal.fire({
-                    icon: 'error',
-                    title: '網路錯誤',
-                    text: '提交失敗，請檢查網路連線後重試',
-                    confirmButtonColor: '#667eea'
-                });
             });
         });
 
