@@ -33,18 +33,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
             case 'create_task':
                 $title = getPostValueSanitized('title');
                 $description = getPostValueSanitized('description');
-                $assignedUserId = getPostValueInt('assigned_user_id');
+                $assignedUserIds = getPostValue('assigned_user_ids', '[]'); // JSON格式的用戶ID陣列
+                $assignToAll = getPostValueBool('assign_to_all');
                 $projectId = getPostValueInt('project_id') ?: null;
                 $dueDate = getPostValue('due_date') ?: null;
                 
-                if (empty($title) || !$assignedUserId) {
-                    throw new Exception('請填寫必要欄位');
+                if (empty($title)) {
+                    throw new Exception('請填寫任務標題');
                 }
                 
+                // 解析分配的用戶ID
+                $userIds = json_decode($assignedUserIds, true);
+                if (!$assignToAll && (empty($userIds) || !is_array($userIds))) {
+                    throw new Exception('請選擇至少一個指派對象或選擇指派給全體員工');
+                }
+                
+                // 創建任務（assigned_user_id設為第一個用戶或null）
+                $primaryUserId = $assignToAll ? null : $userIds[0];
                 $db->execute(
-                    'INSERT INTO tasks (title, description, assigned_user_id, project_id, due_date) VALUES (?, ?, ?, ?, ?)',
-                    [$title, $description, $assignedUserId, $projectId, $dueDate]
+                    'INSERT INTO tasks (title, description, assigned_user_id, assign_to_all, project_id, due_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [$title, $description, $primaryUserId, $assignToAll ? 1 : 0, $projectId, $dueDate, $_SESSION['user_id']]
                 );
+                
+                $taskId = $db->getPdo()->lastInsertId();
+                
+                // 處理任務分配
+                if ($assignToAll) {
+                    // 指派給全體員工
+                    $allUsers = $db->fetchAll('SELECT id FROM users WHERE role = "user"');
+                    foreach ($allUsers as $user) {
+                        $db->execute(
+                            'INSERT INTO task_assignments (task_id, user_id, assigned_by) VALUES (?, ?, ?)',
+                            [$taskId, $user['id'], $_SESSION['user_id']]
+                        );
+                    }
+                } else {
+                    // 指派給選定的用戶
+                    foreach ($userIds as $userId) {
+                        $db->execute(
+                            'INSERT INTO task_assignments (task_id, user_id, assigned_by) VALUES (?, ?, ?)',
+                            [$taskId, $userId, $_SESSION['user_id']]
+                        );
+                    }
+                }
+                
+                AuditLogger::log('task_created', "Created task: $title with " . ($assignToAll ? 'all users' : count($userIds) . ' users'));
+                
                 jsonResponse(true, '任務建立成功！');
                 break;
                 
@@ -384,12 +418,18 @@ $users = $db->fetchAll('SELECT * FROM users ORDER BY created_at DESC');
 // 取得所有專案
 $projects = $db->fetchAll('SELECT * FROM projects ORDER BY created_at DESC');
 
-// 取得所有任務
+// 取得所有任務及其分配信息
 $tasks = $db->fetchAll(
-    'SELECT t.*, u.name as user_name, p.name as project_name 
+    'SELECT t.*, p.name as project_name,
+     CASE 
+         WHEN t.assign_to_all = 1 THEN "全體員工"
+         ELSE GROUP_CONCAT(u.name SEPARATOR ", ")
+     END as assigned_users
      FROM tasks t 
-     JOIN users u ON t.assigned_user_id = u.id 
      LEFT JOIN projects p ON t.project_id = p.id 
+     LEFT JOIN task_assignments ta ON t.id = ta.task_id
+     LEFT JOIN users u ON ta.user_id = u.id
+     GROUP BY t.id
      ORDER BY t.created_at DESC'
 );
 
@@ -701,7 +741,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                                                                 <tr>
                                                                     <td><?php echo $task['id']; ?></td>
                                                                     <td><?php echo htmlspecialchars($task['title']); ?></td>
-                                                                    <td><?php echo htmlspecialchars($task['user_name']); ?></td>
+                                                                    <td><?php echo htmlspecialchars($task['assigned_users'] ?: '未分配'); ?></td>
                                                                     <td><?php echo $task['project_name'] ? htmlspecialchars($task['project_name']) : '-'; ?></td>
                                                                     <td><?php echo $task['due_date'] ?: '-'; ?></td>
                                                                     <td>
@@ -891,7 +931,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                                                 <tr>
                                                     <td><?php echo $task['id']; ?></td>
                                                     <td><?php echo htmlspecialchars($task['title']); ?></td>
-                                                    <td><?php echo htmlspecialchars($task['user_name']); ?></td>
+                                                    <td><?php echo htmlspecialchars($task['assigned_users'] ?: '未分配'); ?></td>
                                                     <td><?php echo $task['project_name'] ? htmlspecialchars($task['project_name']) : '-'; ?></td>
                                                     <td>
                                                         <span class="<?php echo getStatusBadge($task['status']); ?>">
@@ -1398,15 +1438,35 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                             <textarea class="form-control" id="taskDescription" name="description" rows="3"></textarea>
                         </div>
                         <div class="mb-3">
-                            <label for="assignedUser" class="form-label">指派員工 *</label>
-                            <select class="form-select" id="assignedUser" name="assigned_user_id" required>
-                                <option value="">請選擇員工</option>
-                                <?php foreach ($employees as $employee): ?>
-                                    <option value="<?php echo $employee['id']; ?>">
-                                        <?php echo htmlspecialchars($employee['name']); ?> (<?php echo htmlspecialchars($employee['email']); ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <label class="form-label">指派員工 *</label>
+                            <div class="mb-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="assignToAll" name="assign_to_all">
+                                    <label class="form-check-label" for="assignToAll">
+                                        <strong>指派給全體員工</strong>
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="userSelectionArea">
+                                <label for="assignedUsers" class="form-label">選擇特定員工：</label>
+                                <div class="border rounded p-2" style="max-height: 200px; overflow-y: auto;">
+                                    <?php foreach ($employees as $employee): ?>
+                                        <div class="form-check">
+                                            <input class="form-check-input user-checkbox" type="checkbox" 
+                                                   id="user_<?php echo $employee['id']; ?>" 
+                                                   value="<?php echo $employee['id']; ?>">
+                                            <label class="form-check-label" for="user_<?php echo $employee['id']; ?>">
+                                                <?php echo htmlspecialchars($employee['name']); ?> 
+                                                (<?php echo htmlspecialchars($employee['email']); ?>)
+                                            </label>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                                <div class="mt-2">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" id="selectAllUsers">全選</button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="clearAllUsers">取消全選</button>
+                                </div>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label for="taskProject" class="form-label">所屬專案</label>
@@ -1500,12 +1560,33 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
             document.getElementById('taskForm').addEventListener('submit', function(e) {
                 e.preventDefault();
                 
+                const assignToAll = document.getElementById('assignToAll').checked;
+                const selectedUsers = [];
+                
+                if (!assignToAll) {
+                    // 收集選中的用戶ID
+                    document.querySelectorAll('.user-checkbox:checked').forEach(checkbox => {
+                        selectedUsers.push(checkbox.value);
+                    });
+                    
+                    if (selectedUsers.length === 0) {
+                        Swal.fire({
+                            icon: 'warning',
+                            title: '請選擇指派對象',
+                            text: '請選擇至少一個員工或選擇指派給全體員工',
+                            confirmButtonColor: '#667eea'
+                        });
+                        return;
+                    }
+                }
+                
                 const formData = new FormData();
                 formData.append('ajax', '1');
                 formData.append('action', 'create_task');
                 formData.append('title', document.getElementById('taskTitle').value);
                 formData.append('description', document.getElementById('taskDescription').value);
-                formData.append('assigned_user_id', document.getElementById('assignedUser').value);
+                formData.append('assigned_user_ids', JSON.stringify(selectedUsers));
+                formData.append('assign_to_all', assignToAll ? '1' : '0');
                 formData.append('project_id', document.getElementById('taskProject').value);
                 formData.append('due_date', document.getElementById('dueDate').value);
                 
@@ -1522,7 +1603,7 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
                             text: data.message,
                             confirmButtonColor: '#667eea'
                         }).then(() => {
-                            document.getElementById('taskForm').reset();
+                            resetTaskForm();
                             const modal = bootstrap.Modal.getInstance(document.getElementById('taskModal'));
                             modal.hide();
                             location.reload();
@@ -2366,6 +2447,45 @@ $employees = $db->fetchAll('SELECT id, name, email FROM users WHERE role = "user
         document.getElementById('announcements-tab').addEventListener('click', function() {
             loadAnnouncements();
         });
+
+        // 任務表單控制邏輯
+        document.getElementById('assignToAll').addEventListener('change', function() {
+            const userSelectionArea = document.getElementById('userSelectionArea');
+            const userCheckboxes = document.querySelectorAll('.user-checkbox');
+            
+            if (this.checked) {
+                // 指派給全體員工時，隱藏用戶選擇區域並清除所有選擇
+                userSelectionArea.style.display = 'none';
+                userCheckboxes.forEach(checkbox => checkbox.checked = false);
+            } else {
+                // 不指派給全體員工時，顯示用戶選擇區域
+                userSelectionArea.style.display = 'block';
+            }
+        });
+
+        // 全選按鈕
+        document.getElementById('selectAllUsers').addEventListener('click', function() {
+            document.querySelectorAll('.user-checkbox').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        });
+
+        // 取消全選按鈕
+        document.getElementById('clearAllUsers').addEventListener('click', function() {
+            document.querySelectorAll('.user-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        });
+
+        // 重置表單時的邏輯
+        function resetTaskForm() {
+            document.getElementById('taskForm').reset();
+            document.getElementById('assignToAll').checked = false;
+            document.getElementById('userSelectionArea').style.display = 'block';
+            document.querySelectorAll('.user-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        }
     </script>
 </body>
 </html>

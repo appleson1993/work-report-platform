@@ -57,9 +57,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                 throw new Exception('請填寫討論內容');
             }
             
-            // 檢查用戶是否有此專案的權限
+            // 檢查用戶是否有此專案的權限（多用戶分配或全體員工分配）
             $hasAccess = $db->fetch(
-                'SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND assigned_user_id = ?',
+                'SELECT COUNT(DISTINCT t.id) as count FROM tasks t
+                 LEFT JOIN task_assignments ta ON t.id = ta.task_id
+                 WHERE t.project_id = ? AND (ta.user_id = ? OR t.assign_to_all = 1)',
                 [$projectId, $userId]
             )['count'] > 0;
             
@@ -77,9 +79,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
         } elseif ($action === 'get_discussions') {
             $projectId = getPostValueInt('project_id');
             
-            // 檢查權限
+            // 檢查權限（多用戶分配或全體員工分配）
             $hasAccess = $db->fetch(
-                'SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND assigned_user_id = ?',
+                'SELECT COUNT(DISTINCT t.id) as count FROM tasks t
+                 LEFT JOIN task_assignments ta ON t.id = ta.task_id
+                 WHERE t.project_id = ? AND (ta.user_id = ? OR t.assign_to_all = 1)',
                 [$projectId, $userId]
             )['count'] > 0;
             
@@ -257,6 +261,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                 throw new Exception('請填寫加班工作內容');
             }
             
+            // 檢查今天是否已經下班打卡
+            $todayAttendance = $db->fetch(
+                'SELECT * FROM attendance_records WHERE user_id = ? AND work_date = ?',
+                [$userId, $currentDate]
+            );
+            
+            if (!$todayAttendance) {
+                throw new Exception('您今天還沒有上班打卡記錄，無法加班');
+            }
+            
+            if (!$todayAttendance['check_out_time']) {
+                throw new Exception('請先完成下班打卡後才能開始加班');
+            }
+            
             // 檢查今天是否有進行中的加班
             $existingOvertime = $db->fetch(
                 'SELECT * FROM overtime_records WHERE user_id = ? AND work_date = ? AND status = "started"',
@@ -300,9 +318,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
                 [$currentTime, $overtimeHours, $overtimeId]
             );
             
+            // 將加班時數併入當日出勤記錄
+            $attendanceRecord = $db->fetch(
+                'SELECT * FROM attendance_records WHERE user_id = ? AND work_date = ?',
+                [$userId, $overtime['work_date']]
+            );
+            
+            if ($attendanceRecord) {
+                $newTotalHours = $attendanceRecord['work_hours'] + $overtimeHours;
+                $db->execute(
+                    'UPDATE attendance_records SET work_hours = ?, updated_at = NOW() WHERE id = ?',
+                    [$newTotalHours, $attendanceRecord['id']]
+                );
+            }
+            
             jsonResponse(true, '加班結束記錄成功！', [
                 'end_time' => $currentTime,
-                'overtime_hours' => $overtimeHours
+                'overtime_hours' => $overtimeHours,
+                'total_work_hours' => $newTotalHours ?? $overtimeHours
             ]);
             
         } elseif ($action === 'get_overtime_status') {
@@ -350,11 +383,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
     exit;
 }
 
-// 取得使用者的任務和專案
+// 取得使用者的任務和專案（包含多用戶分配和全體員工分配）
 $tasks = $db->fetchAll(
-    'SELECT t.*, p.name as project_name, p.id as project_id FROM tasks t 
+    'SELECT DISTINCT t.*, p.name as project_name, p.id as project_id FROM tasks t 
      LEFT JOIN projects p ON t.project_id = p.id 
-     WHERE t.assigned_user_id = ? 
+     LEFT JOIN task_assignments ta ON t.id = ta.task_id
+     WHERE (ta.user_id = ? OR t.assign_to_all = 1)
      ORDER BY t.created_at DESC',
     [$userId]
 );

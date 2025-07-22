@@ -27,19 +27,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
             }
             
             $records = $db->fetchAll(
-                "SELECT ar.*, u.name as user_name 
+                "SELECT ar.*, u.name as user_name,
+                        COALESCE(SUM(ot.overtime_hours), 0) as overtime_hours,
+                        (ar.work_hours + COALESCE(SUM(ot.overtime_hours), 0)) as total_work_hours
                  FROM attendance_records ar
                  JOIN users u ON ar.user_id = u.id
+                 LEFT JOIN overtime_records ot ON ar.user_id = ot.user_id 
+                                                AND ar.work_date = ot.work_date 
+                                                AND ot.overtime_hours IS NOT NULL
+                                                AND ot.status = 'ended'
                  $whereClause
+                 GROUP BY ar.id, ar.user_id, ar.work_date, ar.work_hours, u.name
                  ORDER BY ar.work_date DESC, u.name",
                 $params
             );
             
-            // 計算統計數據
+            // 計算統計數據（使用總工時包含加班）
             $stats = [
                 'total_records' => count($records),
                 'total_users' => count(array_unique(array_column($records, 'user_id'))),
-                'total_hours' => array_sum(array_column($records, 'work_hours')),
+                'total_hours' => array_sum(array_column($records, 'total_work_hours')),
+                'total_overtime' => array_sum(array_column($records, 'overtime_hours')),
                 'avg_hours' => 0
             ];
             
@@ -57,10 +65,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax'])) {
             $month = getPostValue('month', date('Y-m'));
             
             $records = $db->fetchAll(
-                'SELECT ar.*, u.name as user_name 
+                'SELECT ar.*, u.name as user_name,
+                        COALESCE(SUM(ot.overtime_hours), 0) as overtime_hours,
+                        (ar.work_hours + COALESCE(SUM(ot.overtime_hours), 0)) as total_work_hours
                  FROM attendance_records ar
                  JOIN users u ON ar.user_id = u.id
+                 LEFT JOIN overtime_records ot ON ar.user_id = ot.user_id 
+                                                AND ar.work_date = ot.work_date 
+                                                AND ot.overtime_hours IS NOT NULL
+                                                AND ot.status = "ended"
                  WHERE ar.work_date >= ? AND ar.work_date < ? + INTERVAL 1 MONTH
+                 GROUP BY ar.id, ar.user_id, ar.work_date, ar.work_hours, u.name
                  ORDER BY ar.work_date DESC, u.name',
                 [$month . '-01', $month . '-01']
             );
@@ -219,19 +234,20 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                     </div>
                 </div>
             </div>
-                        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stats-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">總工時</h5>
                         <h2 class="mb-0" id="total-hours">-</h2>
+                        <small class="text-light">含加班時數</small>
                     </div>
                 </div>
             </div>
             <div class="col-lg-3 col-md-6 mb-3">
                 <div class="card stats-card">
                     <div class="card-body text-center">
-                        <h5 class="card-title">平均工時</h5>
-                        <h2 class="mb-0" id="avg-hours">-</h2>
+                        <h5 class="card-title">加班時數</h5>
+                        <h2 class="mb-0" id="total-overtime">-</h2>
                     </div>
                 </div>
             </div>
@@ -300,14 +316,16 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                                         <th class="d-md-none">姓名</th>
                                         <th class="d-none d-lg-table-cell">上班時間</th>
                                         <th class="d-none d-lg-table-cell">下班時間</th>
-                                        <th>工時</th>
+                                        <th>基本工時</th>
+                                        <th class="d-none d-sm-table-cell">加班時數</th>
+                                        <th>總工時</th>
                                         <th class="d-none d-sm-table-cell">狀態</th>
                                         <th class="d-none d-xl-table-cell">備註</th>
                                     </tr>
                                 </thead>
                                 <tbody id="attendance-table-body">
                                     <tr>
-                                        <td colspan="8" class="text-center py-4">
+                                        <td colspan="10" class="text-center py-4">
                                             <i class="fas fa-spinner fa-spin"></i> 載入中...
                                         </td>
                                     </tr>
@@ -372,7 +390,7 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
             document.getElementById('total-records').textContent = data.stats.total_records;
             document.getElementById('total-users').textContent = data.stats.total_users;
             document.getElementById('total-hours').textContent = data.stats.total_hours;
-            document.getElementById('avg-hours').textContent = data.stats.avg_hours;
+            document.getElementById('total-overtime').textContent = data.stats.total_overtime || 0;
             
             // 更新表格
             const tbody = document.getElementById('attendance-table-body');
@@ -380,7 +398,7 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
             if (data.records.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="text-center py-4">
+                        <td colspan="10" class="text-center py-4">
                             <i class="fas fa-inbox fa-2x text-muted mb-2"></i>
                             <br>暫無打卡記錄
                         </td>
@@ -399,6 +417,10 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                 const statusBadge = getStatusBadge(record.status);
                 const statusText = getStatusText(record.status);
                 
+                const baseHours = record.work_hours || 0;
+                const overtimeHours = record.overtime_hours || 0;
+                const totalHours = record.total_work_hours || baseHours;
+                
                 html += `
                     <tr>
                         <td>${record.work_date}</td>
@@ -406,7 +428,15 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                         <td class="d-md-none">${record.user_name.substring(0, 4)}</td>
                         <td class="d-none d-lg-table-cell">${checkInTime}</td>
                         <td class="d-none d-lg-table-cell">${checkOutTime}</td>
-                        <td>${record.work_hours || 0}<span class="d-none d-sm-inline"> 小時</span><span class="d-sm-none">h</span></td>
+                        <td>${baseHours}<span class="d-none d-sm-inline"> 小時</span><span class="d-sm-none">h</span></td>
+                        <td class="d-none d-sm-table-cell">
+                            <span class="${overtimeHours > 0 ? 'text-warning fw-bold' : ''}">${overtimeHours}</span>
+                            <span class="d-none d-sm-inline"> 小時</span><span class="d-sm-none">h</span>
+                        </td>
+                        <td>
+                            <span class="fw-bold text-primary">${totalHours}</span>
+                            <span class="d-none d-sm-inline"> 小時</span><span class="d-sm-none">h</span>
+                        </td>
                         <td class="d-none d-sm-table-cell"><span class="badge ${statusBadge}">${statusText}</span></td>
                         <td class="d-none d-xl-table-cell">${record.notes || '-'}</td>
                     </tr>
@@ -473,7 +503,7 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
 
         // 匯出為 CSV
         function exportToCSV(records, month) {
-            let csv = '日期,員工姓名,上班時間,下班時間,工作時數,狀態,備註\n';
+            let csv = '日期,員工姓名,上班時間,下班時間,基本工時,加班時數,總工時,狀態,備註\n';
             
             records.forEach(record => {
                 const checkInTime = record.check_in_time ? 
@@ -481,8 +511,11 @@ $users = $db->fetchAll('SELECT id, name FROM users ORDER BY name');
                 const checkOutTime = record.check_out_time ? 
                     new Date(record.check_out_time).toLocaleString('zh-TW') : '';
                 const statusText = getStatusText(record.status);
+                const baseHours = record.work_hours || 0;
+                const overtimeHours = record.overtime_hours || 0;
+                const totalHours = record.total_work_hours || baseHours;
                 
-                csv += `${record.work_date},${record.user_name},${checkInTime},${checkOutTime},${record.work_hours || 0},${statusText},${record.notes || ''}\n`;
+                csv += `${record.work_date},${record.user_name},${checkInTime},${checkOutTime},${baseHours},${overtimeHours},${totalHours},${statusText},${record.notes || ''}\n`;
             });
             
             // 下載檔案
