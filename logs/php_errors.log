@@ -1,0 +1,15 @@
+[22-Jul-2025 02:17:32 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 152
+[22-Jul-2025 02:17:32 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 153
+[22-Jul-2025 02:17:32 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 154
+[22-Jul-2025 02:18:57 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 152
+[22-Jul-2025 02:18:57 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 153
+[22-Jul-2025 02:18:57 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 154
+[22-Jul-2025 02:21:54 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 152
+[22-Jul-2025 02:21:54 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 153
+[22-Jul-2025 02:21:54 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 154
+[22-Jul-2025 02:27:50 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 152
+[22-Jul-2025 02:27:50 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 153
+[22-Jul-2025 02:27:50 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 154
+[22-Jul-2025 02:29:20 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 152
+[22-Jul-2025 02:29:20 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 153
+[22-Jul-2025 02:29:20 Asia/Taipei] PHP Warning:  ini_set(): Session ini settings cannot be changed when a session is active in /home/staff-login.letwebs.com/public_html/config/security.php on line 154
