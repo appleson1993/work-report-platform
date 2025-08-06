@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>按鈕測試</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .btn { padding: 10px 20px; margin: 10px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+    </style>
+</head>
+<body>
+    <h1>按鈕功能測試</h1>
+    
+    <button onclick="testToggle()" class="btn btn-primary">
+        📋 測試切換功能
+    </button>
+    
+    <button onclick="testOpenForm()" class="btn btn-secondary">
+        🔗 測試開啟表單
+    </button>
+    
+    <div id="testDiv" style="display: none; margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 4px;">
+        <p>這是測試內容！</p>
+    </div>
+    
+    <script>
+        let isVisible = false;
+        
+        function testToggle() {
+            console.log('testToggle 被調用');
+            const testDiv = document.getElementById('testDiv');
+            
+            if (!isVisible) {
+                testDiv.style.display = 'block';
+                isVisible = true;
+                alert('內容已顯示');
+            } else {
+                testDiv.style.display = 'none';
+                isVisible = false;
+                alert('內容已隱藏');
+            }
+        }
+        
+        function testOpenForm() {
+            console.log('testOpenForm 被調用');
+            const testUrl = 'https://www.google.com';
+            const newWindow = window.open(testUrl, '_blank', 'width=800,height=600');
+            
+            if (!newWindow) {
+                alert('無法開啟新視窗，請檢查瀏覽器設定');
+            } else {
+                alert('新視窗已開啟');
+            }
+        }
+        
+        console.log('測試頁面腳本已載入');
+    </script>
+</body>
+</html>

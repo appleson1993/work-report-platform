@@ -79,17 +79,178 @@ $monthly_stats = $stats_stmt->fetch();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>員工控制台 - 打卡系統</title>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <style>
+        /* 每日報告樣式 */
+        .daily-report-container {
+            margin-top: 1rem;
+        }
+        
+        .report-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .report-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-indicator {
+            font-size: 1.2rem;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.completed {
+            color: #28a745;
+            animation: none;
+        }
+        
+        .status-indicator.pending {
+            color: #ffc107;
+        }
+        
+        .report-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        .report-form-wrapper {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .report-form-wrapper.show {
+            animation: slideDown 0.3s ease;
+        }
+        
+        .form-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+        }
+        
+        .form-header h3 {
+            margin: 0;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .close-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        
+        .close-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: rotate(90deg);
+        }
+        
+        .form-footer {
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        #dailyReportForm {
+            border: none;
+            background: white;
+            border-radius: 0;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* 響應式設計 */
+        @media (max-width: 768px) {
+            .report-info {
+                flex-direction: column;
+                gap: 1rem;
+                text-align: center;
+            }
+            
+            .report-actions {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .form-header {
+                padding: 0.75rem 1rem;
+            }
+            
+            .form-header h3 {
+                font-size: 1rem;
+            }
+            
+            #dailyReportForm {
+                height: 500px;
+            }
+        }
+        
+        /* 提醒動畫 */
+        .report-reminder {
+            animation: shake 0.5s ease-in-out;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+    </style>
 </head>
-<body>
+<body data-staff-id="<?= escape($current_user['staff_id']) ?>" data-staff-name="<?= escape($current_user['name']) ?>">
     <!-- 導航欄 -->
-    <nav class="navbar">
+        <nav class="navbar">
         <div class="nav-container">
-            <a href="#" class="logo">員工打卡系統</a>
-            <div class="nav-links">
-                <a href="dashboard.php">控制台</a>
-                <a href="attendance_history.php">出勤記錄</a>
-                <span style="color: #ccc;">歡迎，<?= escape($current_user['name']) ?></span>
-                <a href="../auth/logout.php">登出</a>
+            <div class="nav-brand">員工打卡系統</div>
+            <button class="nav-toggle" id="navToggle">
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+            </button>
+            <div class="nav-menu" id="navMenu">
+                <a href="dashboard.php" class="nav-link active">控制台</a>
+                <a href="attendance_history.php" class="nav-link">出勤記錄</a>
+                <a href="salary_view.php" class="nav-link">薪資記錄</a>
+                <span class="nav-user">歡迎，<?= escape($current_user['name']) ?></span>
+                <a href="../auth/logout.php" class="nav-link logout">登出</a>
             </div>
         </div>
     </nav>
@@ -230,6 +391,59 @@ $monthly_stats = $stats_stmt->fetch();
                 </div>
             <?php endif; ?>
             
+            <!-- 每日工作報告 -->
+            <div class="card" id="daily-report">
+                <div class="card-header">
+                    <h2 class="card-title">📝 每日工作報告</h2>
+                    <p style="color: #ccc; font-size: 0.9rem; margin: 0.5rem 0 0 0;">請每日完成工作報告，記錄您的工作成果與心得</p>
+                </div>
+                
+                <div class="daily-report-container">
+                    <div class="report-info">
+                        <div class="report-status" id="reportStatus">
+                            <span class="status-indicator" id="statusIndicator">⏳</span>
+                            <span id="statusText">檢查今日報告狀態...</span>
+                        </div>
+                        
+                        <div class="report-actions">
+                            <button onclick="toggleReportForm()" class="btn btn-primary" id="toggleBtn">
+                                📋 填寫今日報告
+                            </button>
+                            <button onclick="openFullForm()" class="btn btn-secondary">
+                                🔗 開啟完整表單
+                            </button>
+                            <button onclick="markReportCompleted()" class="btn btn-success" style="margin-left: 0.5rem;">
+                                ✅ 標記完成
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="report-form-wrapper" id="reportFormWrapper" style="display: none;">
+                        <div class="form-header">
+                            <h3>📅 <?= date('Y年m月d日') ?> 工作報告</h3>
+                            <button onclick="toggleReportForm()" class="close-btn">×</button>
+                        </div>
+                        
+                        <iframe 
+                            id="dailyReportForm"
+                            src="https://docs.google.com/forms/d/e/1FAIpQLSeccnsf6UQuG31A6cxNpjI8ez5ATvVE7YxJ5-GREh8sSJg8Dg/viewform?embedded=true&usp=pp_url&entry.1234567890=<?= urlencode($current_user['name']) ?>&entry.0987654321=<?= urlencode($current_user['staff_id']) ?>&entry.1111111111=<?= date('Y-m-d') ?>" 
+                            width="100%" 
+                            height="600" 
+                            frameborder="0" 
+                            marginheight="0" 
+                            marginwidth="0">
+                            載入中...
+                        </iframe>
+                        
+                        <div class="form-footer">
+                            <p style="color: #ccc; font-size: 0.85rem; text-align: center; margin: 1rem 0;">
+                                💡 提示：請誠實填寫工作內容，這將有助於改善工作流程和績效評估
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <!-- 本月統計 -->
             <div class="card">
                 <h2 style="color: #fff; margin-bottom: 1rem;">本月統計 (<?= date('Y年m月') ?>)</h2>
@@ -333,7 +547,9 @@ $monthly_stats = $stats_stmt->fetch();
             </div>
         </div>
     </div>
-    
+
     <script src="../assets/js/main.js"></script>
+    <script src="../includes/responsive_nav.js"></script>
+    <script src="../assets/js/report-functions.js"></script>
 </body>
 </html>

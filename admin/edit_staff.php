@@ -81,15 +81,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <!-- 導航欄 -->
     <nav class="navbar">
         <div class="nav-container">
-            <a href="dashboard.php" class="logo">員工打卡系統 - 管理後台</a>
-            <div class="nav-links">
-                <a href="dashboard.php">控制台</a>
-                <a href="attendance_report.php">出勤報表</a>
-                <a href="staff_management.php">員工管理</a>
-                                <a href="announcements.php">公告管理</a>
-
-                <span style="color: #ccc;">歡迎，<?= escape($current_user['name']) ?></span>
-                <a href="../auth/logout.php">登出</a>
+            <div class="nav-brand">員工打卡系統 - 管理後台</div>
+            <button class="nav-toggle" id="navToggle">
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+            </button>
+            <div class="nav-menu" id="navMenu">
+                <a href="dashboard.php" class="nav-link">控制台</a>
+                <a href="attendance_report.php" class="nav-link">出勤報表</a>
+                <a href="break_report.php" class="nav-link">休息報表</a>
+                <a href="staff_management.php" class="nav-link active">員工管理</a>
+                <a href="announcements.php" class="nav-link">公告管理</a>
+                <span class="nav-user">歡迎，<?= escape($current_user['name']) ?></span>
+                <a href="../auth/logout.php" class="nav-link logout">登出</a>
             </div>
         </div>
     </nav>
@@ -258,5 +263,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
     
     <script src="../assets/js/main.js"></script>
+    <script src="../includes/responsive_nav.js"></script>
 </body>
 </html>

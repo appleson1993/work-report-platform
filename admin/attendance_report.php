@@ -80,7 +80,32 @@ $query = "
         a.*,
         s.name,
         s.department,
-        s.position
+        s.position,
+        COALESCE(
+            (SELECT SUM(break_minutes) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id AND br.break_end_time IS NOT NULL), 
+            0
+        ) as total_break_minutes,
+        (SELECT COUNT(*) 
+         FROM break_records br 
+         WHERE br.attendance_id = a.id) as break_count,
+        (SELECT GROUP_CONCAT(
+            CONCAT(
+                DATE_FORMAT(br.break_start_time, '%H:%i'), 
+                '-', 
+                CASE 
+                    WHEN br.break_end_time IS NOT NULL 
+                    THEN DATE_FORMAT(br.break_end_time, '%H:%i')
+                    ELSE '進行中'
+                END,
+                '(', br.break_type, ')'
+            ) 
+            ORDER BY br.break_start_time 
+            SEPARATOR ', '
+        ) 
+         FROM break_records br 
+         WHERE br.attendance_id = a.id) as break_details
     FROM attendance a
     JOIN staff s ON a.staff_id = s.staff_id
     WHERE $where_clause
@@ -101,7 +126,25 @@ $stats_query = "
         SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as absent_count,
         SUM(CASE WHEN a.status = 'early_leave' THEN 1 ELSE 0 END) as early_leave_count,
         AVG(a.total_hours) as avg_hours,
-        SUM(a.total_hours) as total_hours
+        SUM(a.total_hours) as total_hours,
+        AVG(COALESCE(
+            (SELECT SUM(break_minutes) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id AND br.break_end_time IS NOT NULL), 
+            0
+        )) as avg_break_minutes,
+        SUM(COALESCE(
+            (SELECT SUM(break_minutes) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id AND br.break_end_time IS NOT NULL), 
+            0
+        )) as total_break_minutes,
+        SUM(COALESCE(
+            (SELECT COUNT(*) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id), 
+            0
+        )) as total_break_count
     FROM attendance a
     JOIN staff s ON a.staff_id = s.staff_id
     WHERE $where_clause
@@ -123,15 +166,23 @@ $statistics = $stats_stmt->fetch();
     <!-- 導航欄 -->
     <nav class="navbar">
         <div class="nav-container">
-            <a href="dashboard.php" class="logo">員工打卡系統 - 管理後台</a>
-            <div class="nav-links">
-                <a href="dashboard.php">控制台</a>
-                <a href="attendance_report.php">出勤報表</a>
-                <a href="staff_management.php">員工管理</a>
-                                <a href="announcements.php">公告管理</a>
-
-                <span style="color: #ccc;">歡迎，<?= escape($current_user['name']) ?></span>
-                <a href="../auth/logout.php">登出</a>
+            <div class="nav-brand">員工打卡系統 - 管理後台</div>
+            <button class="nav-toggle" id="navToggle">
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+            </button>
+            <div class="nav-menu" id="navMenu">
+                <a href="dashboard.php" class="nav-link">控制台</a>
+                <a href="attendance_report.php" class="nav-link active">出勤報表</a>
+                <a href="break_report.php" class="nav-link">休息報表</a>
+                <a href="staff_management.php" class="nav-link">員工管理</a>
+                <a href="salary_management.php" class="nav-link">薪資管理</a>
+                <a href="salary_reports.php" class="nav-link">薪資報表</a>
+                <a href="work_reports.php" class="nav-link">工作報告</a>
+                <a href="announcements.php" class="nav-link">公告管理</a>
+                <span class="nav-user">歡迎，<?= escape($current_user['name']) ?></span>
+                <a href="../auth/logout.php" class="nav-link logout">登出</a>
             </div>
         </div>
     </nav>
@@ -248,6 +299,14 @@ $statistics = $stats_stmt->fetch();
                             <div class="stat-value"><?= round($statistics['avg_hours'] ?: 0, 1) ?></div>
                             <div class="stat-label">平均工時</div>
                         </div>
+                        <div class="stat-card">
+                            <div class="stat-value"><?= round($statistics['avg_break_minutes'] ?: 0, 0) ?></div>
+                            <div class="stat-label">平均休息(分)</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value"><?= $statistics['total_break_count'] ?></div>
+                            <div class="stat-label">總休息次數</div>
+                        </div>
                     </div>
                 </div>
             <?php endif; ?>
@@ -280,7 +339,7 @@ $statistics = $stats_stmt->fetch();
                                 <th onclick="sortTable(4)">上班時間</th>
                                 <th onclick="sortTable(5)">下班時間</th>
                                 <th onclick="sortTable(6)">工時</th>
-                                <th onclick="sortTable(7)">休息</th>
+                                <th onclick="sortTable(7)">休息詳情</th>
                                 <th onclick="sortTable(8)">狀態</th>
                                 <th>IP地址</th>
                                 <th>備註</th>
@@ -296,7 +355,19 @@ $statistics = $stats_stmt->fetch();
                                     <td><?= $record['check_in_time'] ? date('H:i', strtotime($record['check_in_time'])) : '-' ?></td>
                                     <td><?= $record['check_out_time'] ? date('H:i', strtotime($record['check_out_time'])) : '-' ?></td>
                                     <td><?= $record['total_hours'] ?: '0' ?></td>
-                                    <td><?= $record['total_break_minutes'] ? formatBreakTime($record['total_break_minutes']) : '-' ?></td>
+                                    <td>
+                                        <?php if ($record['break_details']): ?>
+                                            <div style="font-size: 0.9rem;">
+                                                <strong><?= formatBreakTime($record['total_break_minutes']) ?></strong>
+                                                <div style="color: #ccc; font-size: 0.8rem; margin-top: 0.2rem;" title="<?= escape($record['break_details']) ?>">
+                                                    <?= escape(mb_substr($record['break_details'], 0, 30)) ?>
+                                                    <?= mb_strlen($record['break_details']) > 30 ? '...' : '' ?>
+                                                </div>
+                                            </div>
+                                        <?php else: ?>
+                                            <span style="color: #999;">無</span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td>
                                         <span class="status <?= getStatusClass($record['status']) ?>">
                                             <?= getStatusText($record['status']) ?>
@@ -370,5 +441,6 @@ $statistics = $stats_stmt->fetch();
     </div>
     
     <script src="../assets/js/main.js"></script>
+    <script src="../includes/responsive_nav.js"></script>
 </body>
 </html>

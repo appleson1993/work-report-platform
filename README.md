@@ -1,6 +1,6 @@
 # 員工打卡系統
 
-這是一個使用 PHP 和 MySQL 開發的簡單員工打卡系統，採用黑色系配色設計。
+這是一個使用 PHP 和 MySQL 開發的完整員工管理系統，採用黑色系配色設計，包含打卡、休息管理、薪資管理等功能。
 
 ## 功能特色
 
@@ -8,17 +8,38 @@
 - 🔐 安全登入驗證
 - ⏰ 即時時間顯示
 - 📍 上班/下班打卡
+- ☕ 休息時間管理（午休、茶歇等）
 - 📊 個人出勤統計
 - 📋 出勤記錄查詢
-- 📱 響應式設計（支援手機和平板）
+- � 個人薪資記錄查看
+- 📈 薪資趨勢圖表
+- �📱 響應式設計（支援手機和平板）
 
 ### 管理員功能
 - 👥 員工管理（新增、編輯、刪除）
 - 📈 出勤報表查看
-- 📊 統計數據分析
+- ☕ 休息時間報表
+- � 薪資管理系統
+  - 薪資類別設定
+  - 薪資記錄管理
+  - 狀態流程控制（待審核 → 已批准 → 已支付）
+  - 月度薪資統計
+- 📊 薪資報表與分析
+  - 員工薪資排名
+  - 類別分布圖表
+  - 月度趨勢分析
+  - CSV 報表導出
+- 📢 公告管理系統
 - 🔍 多條件篩選搜尋
-- 📤 CSV 報表導出
 - 🎯 即時監控出勤狀況
+
+### 薪資管理特色
+- 🏷️ 多樣化薪資類別（基本薪資、績效獎金、專案獎金等）
+- 📋 完整的薪資記錄管理
+- 🔄 狀態工作流程（pending → approved → paid）
+- 📈 視覺化圖表分析
+- 💡 員工激勵機制
+- 📊 統計報表功能
 
 ### 系統特色
 - 🎨 黑色系現代化介面
@@ -27,6 +48,7 @@
 - 📱 移動設備友好
 - 🛡️ SQL 注入防護
 - 🔐 密碼加密存儲
+- 📊 Chart.js 圖表整合
 
 ## 系統需求
 
@@ -58,7 +80,17 @@ $db_config = [
 
 這將自動創建必要的資料表並插入預設帳號。
 
-### 4. 預設帳號
+### 4. 薪資系統初始化
+執行薪資管理系統的資料庫腳本：
+
+```sql
+-- 導入薪資系統資料表
+source database_salary.sql;
+```
+
+或在 phpMyAdmin 中匯入 `database_salary.sql` 檔案。
+
+### 5. 預設帳號
 系統會自動創建以下帳號：
 
 **管理員帳號**
@@ -76,13 +108,20 @@ $db_config = [
 ├── admin/                    # 管理員後台
 │   ├── dashboard.php        # 管理員控制台
 │   ├── attendance_report.php # 出勤報表
+│   ├── break_report.php     # 休息報表
 │   ├── staff_management.php # 員工管理
+│   ├── salary_management.php # 薪資管理
+│   ├── salary_reports.php   # 薪資報表
+│   ├── announcements.php   # 公告管理
 │   ├── edit_staff.php      # 編輯員工
 │   ├── delete_staff.php    # 刪除員工
 │   └── export_attendance.php # 導出CSV
 ├── api/                     # API 接口
 │   ├── clock_in.php        # 上班打卡API
-│   └── clock_out.php       # 下班打卡API
+│   ├── clock_out.php       # 下班打卡API
+│   ├── break_start.php     # 開始休息API
+│   ├── break_end.php       # 結束休息API
+│   └── mark_announcement_read.php # 標記公告已讀
 ├── assets/                  # 靜態資源
 │   ├── css/
 │   │   └── style.css       # 主要樣式檔案
@@ -94,18 +133,23 @@ $db_config = [
 ├── config/                  # 配置檔案
 │   └── database.php        # 資料庫配置
 ├── includes/                # 共用檔案
-│   └── functions.php       # 共用函數
+│   ├── functions.php       # 共用函數
+│   └── responsive_nav.js   # 響應式導航
 ├── setup/                   # 安裝檔案
 │   └── init_db.php         # 資料庫初始化
 ├── staff/                   # 員工功能
 │   ├── dashboard.php       # 員工控制台
-│   └── attendance_history.php # 出勤記錄
+│   ├── attendance_history.php # 出勤記錄
+│   └── salary_view.php     # 薪資查看
+├── database_salary.sql     # 薪資系統資料庫腳本
 └── index.php               # 登入頁面
 ```
 
 ## 資料庫結構
 
-### staff 表（員工資料）
+### 基本資料表
+
+#### staff 表（員工資料）
 - `id` - 主鍵
 - `staff_id` - 員工編號（唯一）
 - `name` - 姓名
@@ -116,6 +160,39 @@ $db_config = [
 - `is_admin` - 是否為管理員
 - `created_at` - 創建時間
 - `updated_at` - 更新時間
+
+### 薪資管理資料表
+
+#### salary_categories 表（薪資類別）
+- `id` - 主鍵
+- `name` - 類別名稱
+- `description` - 類別描述
+- `color` - 顯示顏色
+- `is_active` - 是否啟用
+- `created_at` - 創建時間
+
+#### salary_records 表（薪資記錄）
+- `id` - 主鍵
+- `staff_id` - 員工編號（外鍵）
+- `category_id` - 薪資類別（外鍵）
+- `title` - 薪資項目標題
+- `description` - 詳細說明
+- `amount` - 金額
+- `record_date` - 記錄日期
+- `status` - 狀態（pending/approved/rejected/paid）
+- `approved_at` - 批准時間
+- `paid_at` - 支付時間
+- `created_at` - 創建時間
+
+#### salary_monthly_stats 表（月度薪資統計）
+- `id` - 主鍵
+- `staff_id` - 員工編號（外鍵）
+- `year` - 年份
+- `month` - 月份
+- `total_amount` - 總金額
+- `paid_amount` - 已支付金額
+- `record_count` - 記錄數
+- `last_updated` - 最後更新時間
 
 ### attendance 表（出勤記錄）
 - `id` - 主鍵

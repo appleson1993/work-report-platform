@@ -28,7 +28,19 @@ $month_stats_stmt = $pdo->prepare("
         COUNT(DISTINCT a.staff_id) as active_staff,
         AVG(a.total_hours) as avg_work_hours,
         SUM(CASE WHEN a.status = 'late' THEN 1 ELSE 0 END) as total_late,
-        SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as total_absent
+        SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as total_absent,
+        AVG(COALESCE(
+            (SELECT SUM(break_minutes) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id AND br.break_end_time IS NOT NULL), 
+            0
+        )) as avg_break_minutes,
+        SUM(COALESCE(
+            (SELECT COUNT(*) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id), 
+            0
+        )) as total_break_sessions
     FROM attendance a
     WHERE DATE_FORMAT(a.work_date, '%Y-%m') = ?
 ");
@@ -47,7 +59,21 @@ $today_attendance_stmt = $pdo->prepare("
         a.total_hours,
         a.total_break_minutes,
         a.ip_address,
-        a.user_agent
+        a.user_agent,
+        COALESCE(
+            (SELECT SUM(break_minutes) 
+             FROM break_records br 
+             WHERE br.attendance_id = a.id AND br.break_end_time IS NOT NULL), 
+            0
+        ) as calculated_break_minutes,
+        (SELECT COUNT(*) 
+         FROM break_records br 
+         WHERE br.attendance_id = a.id) as break_count,
+        (SELECT br.break_type 
+         FROM break_records br 
+         WHERE br.attendance_id = a.id AND br.break_end_time IS NULL
+         ORDER BY br.break_start_time DESC 
+         LIMIT 1) as current_break_type
     FROM staff s
     LEFT JOIN attendance a ON s.staff_id = a.staff_id AND a.work_date = ?
     WHERE s.is_admin = 0
@@ -84,14 +110,23 @@ $recent_issues = $recent_issues_stmt->fetchAll();
     <!-- 導航欄 -->
     <nav class="navbar">
         <div class="nav-container">
-            <a href="#" class="logo">員工打卡系統 - 管理後台</a>
-            <div class="nav-links">
-                <a href="dashboard.php">控制台</a>
-                <a href="attendance_report.php">出勤報表</a>
-                <a href="staff_management.php">員工管理</a>
-                <a href="announcements.php">公告管理</a>
-                <span style="color: #ccc;">歡迎，<?= escape($current_user['name']) ?></span>
-                <a href="../auth/logout.php">登出</a>
+            <div class="nav-brand">員工打卡系統 - 管理後台</div>
+            <button class="nav-toggle" id="navToggle">
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+            </button>
+            <div class="nav-menu" id="navMenu">
+                <a href="dashboard.php" class="nav-link active">控制台</a>
+                <a href="attendance_report.php" class="nav-link">出勤報表</a>
+                <a href="break_report.php" class="nav-link">休息報表</a>
+                <a href="staff_management.php" class="nav-link">員工管理</a>
+                <a href="salary_management.php" class="nav-link">薪資管理</a>
+                <a href="salary_reports.php" class="nav-link">薪資報表</a>
+                <a href="work_reports.php" class="nav-link">工作報告</a>
+                <a href="announcements.php" class="nav-link">公告管理</a>
+                <span class="nav-user">歡迎，<?= escape($current_user['name']) ?></span>
+                <a href="../auth/logout.php" class="nav-link logout">登出</a>
             </div>
         </div>
     </nav>
@@ -145,12 +180,20 @@ $recent_issues = $recent_issues_stmt->fetchAll();
                         <div class="stat-label">平均工時</div>
                     </div>
                     <div class="stat-card">
+                        <div class="stat-value"><?= round($month_stats['avg_break_minutes'] ?: 0, 0) ?></div>
+                        <div class="stat-label">平均休息(分)</div>
+                    </div>
+                    <div class="stat-card">
                         <div class="stat-value"><?= $month_stats['total_late'] ?: '0' ?></div>
                         <div class="stat-label">總遲到次數</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value"><?= $month_stats['total_absent'] ?: '0' ?></div>
                         <div class="stat-label">總缺席次數</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value"><?= $month_stats['total_break_sessions'] ?: '0' ?></div>
+                        <div class="stat-label">總休息次數</div>
                     </div>
                 </div>
             </div>
@@ -177,7 +220,7 @@ $recent_issues = $recent_issues_stmt->fetchAll();
                                 <th onclick="sortTable(3)">上班時間</th>
                                 <th onclick="sortTable(4)">下班時間</th>
                                 <th onclick="sortTable(5)">工時</th>
-                                <th onclick="sortTable(6)">休息</th>
+                                <th onclick="sortTable(6)">休息狀態</th>
                                 <th onclick="sortTable(7)">狀態</th>
                                 <th>IP/裝置</th>
                             </tr>
@@ -191,7 +234,22 @@ $recent_issues = $recent_issues_stmt->fetchAll();
                                     <td><?= $record['check_in_time'] ? date('H:i', strtotime($record['check_in_time'])) : '-' ?></td>
                                     <td><?= $record['check_out_time'] ? date('H:i', strtotime($record['check_out_time'])) : '-' ?></td>
                                     <td><?= $record['total_hours'] ?: '0' ?></td>
-                                    <td><?= $record['total_break_minutes'] ? formatBreakTime($record['total_break_minutes']) : '-' ?></td>
+                                    <td>
+                                        <?php if ($record['current_break_type']): ?>
+                                            <span class="break-status" style="background: rgba(255, 165, 0, 0.2); color: #ffa500; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem;">
+                                                <?= getBreakTypeText($record['current_break_type']) ?>中
+                                            </span>
+                                        <?php elseif ($record['calculated_break_minutes'] > 0): ?>
+                                            <span style="color: #ccc; font-size: 0.9rem;">
+                                                <?= formatBreakTime($record['calculated_break_minutes']) ?>
+                                                <?php if ($record['break_count'] > 0): ?>
+                                                    <small>(<?= $record['break_count'] ?>次)</small>
+                                                <?php endif; ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <span style="color: #999;">無</span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td>
                                         <?php if ($record['status']): ?>
                                             <span class="status <?= getStatusClass($record['status']) ?>">
@@ -277,5 +335,6 @@ $recent_issues = $recent_issues_stmt->fetchAll();
     </div>
     
     <script src="../assets/js/main.js"></script>
+    <script src="../includes/responsive_nav.js"></script>
 </body>
 </html>

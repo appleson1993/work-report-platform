@@ -68,12 +68,18 @@ $monthly_stats = $stats_stmt->fetch();
     <!-- 導航欄 -->
     <nav class="navbar">
         <div class="nav-container">
-            <a href="dashboard.php" class="logo">員工打卡系統</a>
-            <div class="nav-links">
-                <a href="dashboard.php">控制台</a>
-                <a href="attendance_history.php">出勤記錄</a>
-                <span style="color: #ccc;">歡迎，<?= escape($current_user['name']) ?></span>
-                <a href="../auth/logout.php">登出</a>
+            <div class="nav-brand">員工打卡系統</div>
+            <button class="nav-toggle" id="navToggle">
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+                <span class="hamburger"></span>
+            </button>
+            <div class="nav-menu" id="navMenu">
+                <a href="dashboard.php" class="nav-link">控制台</a>
+                <a href="attendance_history.php" class="nav-link active">出勤記錄</a>
+                <a href="salary_view.php" class="nav-link">薪資記錄</a>
+                <span class="nav-user">歡迎，<?= escape($current_user['name']) ?></span>
+                <a href="../auth/logout.php" class="nav-link logout">登出</a>
             </div>
         </div>
     </nav>
@@ -104,6 +110,24 @@ $monthly_stats = $stats_stmt->fetch();
                         <a href="attendance_history.php" class="btn btn-primary">重置</a>
                     </div>
                 </form>
+            </div>
+            
+            <!-- 工作報告提醒 -->
+            <div class="card" style="background: linear-gradient(135deg, #007bff, #0056b3); border: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3 style="color: white; margin: 0 0 0.5rem 0; font-size: 1.1rem;">📝 每日工作報告</h3>
+                        <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 0.9rem;">請記得完成今日的工作報告</p>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <a href="dashboard.php#daily-report" class="btn" style="background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">
+                            填寫報告
+                        </a>
+                        <a href="https://docs.google.com/forms/d/e/1FAIpQLSeccnsf6UQuG31A6cxNpjI8ez5ATvVE7YxJ5-GREh8sSJg8Dg/viewform" target="_blank" class="btn" style="background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">
+                            🔗 完整表單
+                        </a>
+                    </div>
+                </div>
             </div>
             
             <!-- 月份統計 -->
@@ -205,5 +229,6 @@ $monthly_stats = $stats_stmt->fetch();
     </div>
     
     <script src="../assets/js/main.js"></script>
+    <script src="../includes/responsive_nav.js"></script>
 </body>
 </html>
