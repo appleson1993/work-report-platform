@@ -1,185 +1,192 @@
-# WorkLog Manager - 工作日誌管理系統 v1.0.0
+# 員工打卡系統
 
-## 📋 系統概述
+這是一個使用 PHP 和 MySQL 開發的簡單員工打卡系統，採用黑色系配色設計。
 
-WorkLog Manager 是一個專為企業內部使用設計的工作日誌管理系統，提供員工打卡、工作報告、**加班記錄**、專案管理等功能。系統已完成產品化，具備完整的安全防護機制。
+## 功能特色
 
-## 🚀 最新功能 (v1.0.0)
+### 員工功能
+- 🔐 安全登入驗證
+- ⏰ 即時時間顯示
+- 📍 上班/下班打卡
+- 📊 個人出勤統計
+- 📋 出勤記錄查詢
+- 📱 響應式設計（支援手機和平板）
 
-### ⏰ 新增加班功能
-- **無限次加班記錄**: 員工可隨時開始和結束加班
-- **工作內容記錄**: 必須填寫加班工作內容
-- **時數自動計算**: 系統自動計算加班時長
-- **統計報表**: 提供加班統計和歷史記錄
+### 管理員功能
+- 👥 員工管理（新增、編輯、刪除）
+- 📈 出勤報表查看
+- 📊 統計數據分析
+- 🔍 多條件篩選搜尋
+- 📤 CSV 報表導出
+- 🎯 即時監控出勤狀況
 
-### 👨‍💼 管理員前台權限
-- **雙重權限**: 管理員可使用前台工作功能
-- **靈活切換**: 可在前台和後台之間自由切換
-- **完整功能**: 享有所有員工功能 + 管理功能
+### 系統特色
+- 🎨 黑色系現代化介面
+- 🚀 快速響應的 AJAX 操作
+- 🔒 完整的權限控制
+- 📱 移動設備友好
+- 🛡️ SQL 注入防護
+- 🔐 密碼加密存儲
 
-### 🔒 安全強化
-- **CSRF 保護**: 防止跨站請求偽造攻擊
-- **登入限制**: 5次失敗嘗試後鎖定15分鐘
-- **操作審計**: 所有關鍵操作都有日誌記錄
-- **安全配置**: 強化的 .htaccess 和 PHP 配置
+## 系統需求
 
-## 🛠 技術架構
+- PHP 7.4 或更高版本
+- MySQL 5.7 或更高版本
+- Apache/Nginx 網頁伺服器
+- 支援 PDO MySQL 擴展
 
-- **前端：** HTML5 + Bootstrap 5 + SweetAlert2
-- **後端：** PHP 8+ (無框架)
-- **資料庫：** MySQL 5.7+/MariaDB
-- **Session：** PHP 內建 Session 管理
-- **安全性：** PDO 防 SQL injection、bcrypt 密碼加密
+## 安裝步驟
 
-## 📁 檔案結構
-
-```
-public_html/
-├── config/
-│   ├── database.php      # 資料庫連線設定
-│   └── functions.php     # 共用函數和工具
-├── index.php             # 登入/註冊頁面
-├── dashboard.php         # 員工面板
-├── admin.php            # 管理員後台
-├── logout.php           # 登出處理
-├── init_database.php    # 資料庫初始化腳本
-├── database.sql         # 資料庫結構 SQL
-└── README.md           # 說明文件
-```
-
-## 🚀 安裝步驟
-
-### 1. 環境需求
-- PHP 8.0 以上
-- MySQL 5.7 以上或 MariaDB
-- Web 伺服器 (Apache/Nginx)
+### 1. 上傳檔案
+將所有檔案上傳到您的網站根目錄。
 
 ### 2. 資料庫設定
-1. 建立資料庫 `staf_db`
-2. 執行初始化腳本：
-   ```bash
-   php init_database.php
-   ```
-   或直接匯入 `database.sql`
+編輯 `config/database.php` 檔案，修改資料庫連接資訊：
 
-### 3. 設定檔案
-在 `config/database.php` 中設定您的資料庫連線資訊：
 ```php
-private $host = 'localhost';
-private $dbname = 'staf_db';
-private $username = 'staf_db';
-private $password = 'vJ@B5xKBxUxsc45o';
+$db_config = [
+    'host' => 'localhost',
+    'dbname' => 'staf_db',
+    'username' => 'root',
+    'password' => 'Cv#w5I6OE%l4x%0D',
+    'charset' => 'utf8mb4'
+];
 ```
 
-### 4. 權限設定
-確保 web 伺服器對專案目錄有適當的讀寫權限。
+### 3. 初始化資料庫
+在瀏覽器中訪問：`http://your-domain.com/setup/init_db.php`
 
-## 👥 使用者角色
+這將自動創建必要的資料表並插入預設帳號。
 
-### 一般員工 (user)
-- 註冊帳號
-- 查看指派給自己的任務
-- 填寫每日工作回報
-- 查看自己的歷史回報
-- 編輯個人資料
+### 4. 預設帳號
+系統會自動創建以下帳號：
 
-### 管理員 (admin)
-- 管理使用者身分和角色
-- 建立和管理專案
-- 建立和指派任務
-- 查看所有員工的工作回報
-- 產生工作報表
+**管理員帳號**
+- 員工編號：`ADMIN001`
+- 密碼：`admin123`
 
-## 🔑 預設帳號
+**測試員工帳號**
+- 員工編號：`EMP001`
+- 密碼：`staff123`
 
-**管理員帳號：**
-- Email: admin@worklog.com
-- 密碼: admin123
+## 目錄結構
 
-## 📱 主要功能
+```
+/
+├── admin/                    # 管理員後台
+│   ├── dashboard.php        # 管理員控制台
+│   ├── attendance_report.php # 出勤報表
+│   ├── staff_management.php # 員工管理
+│   ├── edit_staff.php      # 編輯員工
+│   ├── delete_staff.php    # 刪除員工
+│   └── export_attendance.php # 導出CSV
+├── api/                     # API 接口
+│   ├── clock_in.php        # 上班打卡API
+│   └── clock_out.php       # 下班打卡API
+├── assets/                  # 靜態資源
+│   ├── css/
+│   │   └── style.css       # 主要樣式檔案
+│   └── js/
+│       └── main.js         # JavaScript 功能
+├── auth/                    # 認證相關
+│   ├── login_process.php   # 登入處理
+│   └── logout.php          # 登出處理
+├── config/                  # 配置檔案
+│   └── database.php        # 資料庫配置
+├── includes/                # 共用檔案
+│   └── functions.php       # 共用函數
+├── setup/                   # 安裝檔案
+│   └── init_db.php         # 資料庫初始化
+├── staff/                   # 員工功能
+│   ├── dashboard.php       # 員工控制台
+│   └── attendance_history.php # 出勤記錄
+└── index.php               # 登入頁面
+```
 
-### 1. 員工面板 (dashboard.php)
-- **任務檢視：** 顯示指派給該員工的所有任務
-- **狀態管理：** 未開始、進行中、已完成
-- **每日回報：** 限制每日一筆回報，可編輯當日內容
-- **歷史紀錄：** 查看過往所有回報紀錄
-- **統計資訊：** 任務完成度統計
+## 資料庫結構
 
-### 2. 管理員後台 (admin.php)
-- **使用者管理：** 查看所有使用者，切換角色權限
-- **專案管理：** 建立、編輯專案資訊
-- **任務管理：** 建立任務並指派給員工
-- **回報查看：** 多條件篩選查看所有工作回報
-- **統計儀表板：** 系統整體使用狀況
+### staff 表（員工資料）
+- `id` - 主鍵
+- `staff_id` - 員工編號（唯一）
+- `name` - 姓名
+- `email` - 電子郵件
+- `password` - 密碼（加密）
+- `department` - 部門
+- `position` - 職位
+- `is_admin` - 是否為管理員
+- `created_at` - 創建時間
+- `updated_at` - 更新時間
 
-### 3. 登入/註冊系統 (index.php)
-- **安全登入：** bcrypt 密碼加密
-- **使用者註冊：** Email 唯一性驗證
-- **表單驗證：** 前端和後端雙重驗證
-- **友善介面：** 響應式設計，支援各種裝置
+### attendance 表（出勤記錄）
+- `id` - 主鍵
+- `staff_id` - 員工編號（外鍵）
+- `check_in_time` - 上班時間
+- `check_out_time` - 下班時間
+- `work_date` - 工作日期
+- `total_hours` - 總工作時數
+- `status` - 出勤狀態
+- `notes` - 備註
+- `created_at` - 創建時間
+- `updated_at` - 更新時間
 
-## 🔒 安全特性
+## 出勤狀態說明
 
-- **SQL Injection 防護：** 使用 PDO 預處理語句
-- **密碼安全：** bcrypt 雜湊加密
-- **Session 管理：** 安全的會話控制
-- **權限檢查：** 頁面層級的權限驗證
-- **輸入清理：** 防止 XSS 攻擊
+- `present` - 正常出勤
+- `late` - 遲到（超過 09:00 打卡）
+- `absent` - 缺席（未打卡）
+- `early_leave` - 早退（未滿 8 小時且早於 18:00 下班）
 
-## 📊 資料庫設計
+## 使用說明
 
-### 主要資料表
+### 員工使用
+1. 使用員工編號和密碼登入
+2. 在控制台進行上班打卡
+3. 工作結束後進行下班打卡
+4. 可查看個人出勤記錄和統計
 
-1. **users** - 使用者資料
-   - id, name, email, password, role, created_at, updated_at
+### 管理員使用
+1. 使用管理員帳號登入
+2. 在控制台查看整體出勤狀況
+3. 在出勤報表中查看詳細記錄
+4. 在員工管理中新增/編輯員工
+5. 可導出 CSV 報表進行分析
 
-2. **projects** - 專案資料
-   - id, name, description, created_at, updated_at
+## 安全特性
 
-3. **tasks** - 任務資料
-   - id, title, description, assigned_user_id, project_id, status, due_date, created_at, updated_at
+- 密碼使用 PHP `password_hash()` 加密
+- 使用 PDO 預處理語句防止 SQL 注入
+- Session 管理和權限控制
+- 輸入驗證和 HTML 轉義
+- CSRF 保護（表單提交驗證）
 
-4. **work_reports** - 工作回報
-   - id, task_id, user_id, report_date, content, status, created_at, updated_at
+## 自訂設定
 
-## 🎨 前端特色
+### 工作時間設定
+在 `includes/functions.php` 中可以修改：
+- 標準上班時間：預設 09:00
+- 標準下班時間：預設 18:00
+- 標準工作時數：預設 8 小時
 
-- **Bootstrap 5：** 現代化響應式設計
-- **SweetAlert2：** 美觀的提示對話框
-- **Font Awesome：** 豐富的圖示庫
-- **漸層設計：** 現代化的視覺效果
-- **卡片佈局：** 清晰的資訊組織
+### 樣式自訂
+主要樣式檔案位於 `assets/css/style.css`，採用 CSS 變數設計，便於修改配色。
 
-## 🔧 客製化
+## 技術支援
 
-### 新增狀態類型
-在 `config/functions.php` 中修改 `getStatusText()` 和 `getStatusBadge()` 函數。
-
-### 修改樣式
-所有樣式都使用內聯 CSS，可直接在各檔案中修改。
-
-### 新增功能
-遵循現有的 MVC 模式和 AJAX 處理方式來擴展功能。
-
-## 🐛 常見問題
-
-### Q: 無法連接資料庫
-A: 檢查 `config/database.php` 中的連線設定是否正確。
-
-### Q: 登入後出現空白頁面
-A: 檢查 PHP 錯誤日誌，確認 Session 功能正常。
-
-### Q: 無法上傳或提交表單
-A: 檢查 PHP 設定中的 `post_max_size` 和 `upload_max_filesize`。
-
-## 📞 技術支援
-
-如遇到問題，請檢查：
+如果遇到問題，請檢查：
 1. PHP 版本是否符合需求
-2. 資料庫連線是否正常
-3. 檔案權限是否正確設定
-4. Web 伺服器錯誤日誌
+2. MySQL 服務是否正常運行
+3. 資料庫連接設定是否正確
+4. 檔案權限是否正確設置
 
-## 📄 授權
+## 授權說明
 
-此專案為內部使用系統，請勿用於商業用途。
+此專案僅供學習和內部使用，請勿用於商業用途。
+
+## 更新日誌
+
+### v1.0.0 (2025-01-22)
+- 初始版本發布
+- 完整的打卡功能
+- 管理員後台
+- 報表導出功能
+- 響應式設計
